@@ -317,7 +317,7 @@ class StageManager:
             
             # Check if we reached the goal
             if self.current_stage == GameStage.FIRST_TOWN:
-                self.log_thinking("🎉 GOAL REACHED! Made it to first town!")
+                self.log_thinking("*** GOAL REACHED! Made it to first town! ***")
                 if self.on_goal_reached:
                     self.on_goal_reached()
             
@@ -349,10 +349,10 @@ class StageManager:
         
         if success:
             self.memory.record_success(stage_name, action)
-            self.log_thinking(f"✓ Action succeeded: {action}")
+            self.log_thinking(f"[OK] Action succeeded: {action}")
         else:
             self.memory.record_failure(stage_name, action, reason)
-            self.log_thinking(f"✗ Action failed: {action} - {reason}")
+            self.log_thinking(f"[X] Action failed: {action} - {reason}")
     
     def get_suggested_action(self) -> Optional[StageHint]:
         """Get the top suggested action for current stage."""

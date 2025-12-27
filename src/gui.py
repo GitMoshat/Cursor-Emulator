@@ -314,9 +314,9 @@ class EmulatorGUI:
         self.attempt_results.append(success)
         
         if success:
-            self.agent_thinking_log.append(f"🎉 ATTEMPT {self.current_attempt} SUCCESSFUL!")
+            self.agent_thinking_log.append(f"*** ATTEMPT {self.current_attempt} SUCCESSFUL! ***")
         else:
-            self.agent_thinking_log.append(f"❌ Attempt {self.current_attempt} failed")
+            self.agent_thinking_log.append(f"[X] Attempt {self.current_attempt} failed")
         
         # Check if more attempts remain
         if self.current_attempt < self.max_attempts:
@@ -375,7 +375,7 @@ class EmulatorGUI:
                     self.turbo_mode = not self.turbo_mode
                     self.frame_skip = 2 if self.turbo_mode else 0
                     if self.agent_enabled:
-                        mode_str = "TURBO ON ⚡" if self.turbo_mode else "Normal speed"
+                        mode_str = "TURBO ON [FAST]" if self.turbo_mode else "Normal speed"
                         self.agent_thinking_log.append(f"[Speed] {mode_str}")
                 
                 elif event.key == pygame.K_F2:
@@ -630,7 +630,7 @@ class EmulatorGUI:
                         (arrow_x + 10, opt_y + option_h + 2)
                     ])
                     # Label the selection
-                    sel_text = self.font_small.render(f"→ {labels[i]}", True, COLOR_ARROW)
+                    sel_text = self.font_small.render(f">> {labels[i]}", True, COLOR_ARROW)
                     self.screen.blit(sel_text, (dx + 5, dy + 36))
                 else:
                     pygame.draw.rect(self.screen, (100, 60, 60), 
@@ -743,7 +743,7 @@ class EmulatorGUI:
         
         # Current selection label
         if menu_state < len(options):
-            label = self.font_small.render(f"→ {options[menu_state]}", True, COLOR_ARROW)
+            label = self.font_small.render(f">> {options[menu_state]}", True, COLOR_ARROW)
             self.screen.blit(label, (dx + 5, dy + 36))
         
         # Enemy info box (top-left area)
@@ -994,7 +994,7 @@ class EmulatorGUI:
         pygame.draw.rect(self.screen, (80, 150, 80), (x, y, panel_width, goal_box_h), 2)
         
         # Goal title
-        goal_title = self.font_title.render(f"🎯 {goal_name}", True, (120, 220, 120))
+        goal_title = self.font_title.render(f"[GOAL] {goal_name}", True, (120, 220, 120))
         self.screen.blit(goal_title, (x + 5, y + 5))
         
         # Goal description
@@ -1017,7 +1017,7 @@ class EmulatorGUI:
                 if mem_state:
                     pos = mem_state.player_position
                     state_text = self.font_small.render(
-                        f"📍 ({pos.x},{pos.y}) {pos.map_name[:20]}", True, (150, 180, 200)
+                        f"[LOC] ({pos.x},{pos.y}) {pos.map_name[:20]}", True, (150, 180, 200)
                     )
                     self.screen.blit(state_text, (x, y))
                     y += 16
@@ -1026,7 +1026,7 @@ class EmulatorGUI:
                     if mem_state.battle.in_battle:
                         b = mem_state.battle
                         battle_text = self.font_small.render(
-                            f"⚔️ BATTLE vs {b.enemy_name} Lv{b.enemy_level}", True, (250, 150, 150)
+                            f"[BATTLE] vs {b.enemy_name} Lv{b.enemy_level}", True, (250, 150, 150)
                         )
                         self.screen.blit(battle_text, (x, y))
                     elif mem_state.party_count > 0:
@@ -1043,7 +1043,7 @@ class EmulatorGUI:
         y += 8
         
         # === THINKING LOG ===
-        thinking_title = self.font_small.render("💭 AI Thinking:", True, self.HIGHLIGHT_COLOR)
+        thinking_title = self.font_small.render("[AI] Thinking:", True, self.HIGHLIGHT_COLOR)
         self.screen.blit(thinking_title, (x, y))
         y += 18
         
@@ -1056,9 +1056,9 @@ class EmulatorGUI:
                 display_line = line[-max_chars:] if len(line) > max_chars else line
                 
                 # Color code
-                if '✓' in line or 'COMPLETE' in line:
+                if '[OK]' in line or 'COMPLETE' in line:
                     color = (100, 220, 100)
-                elif '✗' in line or 'fail' in line.lower() or 'error' in line.lower():
+                elif '[X]' in line or 'fail' in line.lower() or 'error' in line.lower():
                     color = (220, 100, 100)
                 elif 'GOAL' in line or '===' in line:
                     color = (220, 200, 100)
