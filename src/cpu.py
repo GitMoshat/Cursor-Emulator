@@ -528,7 +528,7 @@ class CPU:
                 if reg == '(hl)':
                     self.cb_opcodes[opcode] = lambda b=bit: self._set_hl(b)
                 else:
-                    self.cb_opcodes[opcode] = lambda b=bit, r=reg: self._set_r8(b, r)
+                    self.cb_opcodes[opcode] = lambda b=bit, r=reg: self._set_r8_bit(b, r)
     
     # =========================================================================
     # INSTRUCTION IMPLEMENTATIONS
