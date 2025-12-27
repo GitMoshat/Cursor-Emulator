@@ -9,6 +9,7 @@ from .memory_manager import MemoryManager
 from .game_stages import StageManager, GameStage, POKEMON_STAGES
 from .smart_agent import SmartAgent
 from .action_toolkit import ActionToolkit, ToolkitAgent
+from .goal_system import GoalSystem, Goal, GoalStatus
 
 __all__ = [
     'AgentInterface',
@@ -21,6 +22,9 @@ __all__ = [
     'SmartAgent',
     'ActionToolkit',
     'ToolkitAgent',
+    'GoalSystem',
+    'Goal',
+    'GoalStatus',
     'MemoryManager',
     'StubAgent',
     'RandomAgent',

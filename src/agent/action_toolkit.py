@@ -346,14 +346,17 @@ class ToolkitAgent:
     AI Agent that uses the ActionToolkit to discover and request actions.
     
     Instead of directly deciding buttons, it:
-    1. Gets the list of available actions
+    1. Gets the current goal from the goal system
     2. Analyzes the situation
-    3. Requests an action by name
+    3. Requests an action that helps achieve the goal
     4. The toolkit converts that to button presses
+    5. Checks if goal is complete
     """
     
     def __init__(self, config=None):
         from .interface import AgentConfig
+        from .goal_system import GoalSystem
+        
         self.name = "ToolkitAgent"
         self.enabled = False
         self.frame_skip = 6
@@ -362,6 +365,7 @@ class ToolkitAgent:
         
         self.toolkit: Optional[ActionToolkit] = None
         self.memory_manager = None
+        self.goal_system = GoalSystem()  # Goal tracking
         
         # LLM
         self.ollama_host = self.config.ollama_host
@@ -371,6 +375,7 @@ class ToolkitAgent:
         # State
         self.thinking_history: List[str] = []
         self.last_situation = ""
+        self.last_goal_id = ""
         self.pending_action: Optional[str] = None
         self.hold_remaining = 0
         self.current_result: Optional[ActionResult] = None
@@ -387,18 +392,25 @@ class ToolkitAgent:
             self.memory_manager = MemoryManager(emulator)
             self.memory_manager.detect_game()
             self.toolkit = ActionToolkit(self.memory_manager)
-            self._log(f"Toolkit loaded with {len(self.toolkit.actions)} actions")
+            self._log(f"Toolkit: {len(self.toolkit.actions)} actions available")
         
         # Try LLM
         try:
             import requests
             resp = requests.get(f"{self.ollama_host}/api/tags", timeout=3)
             self.llm_connected = resp.status_code == 200
-            self._log(f"LLM: {'connected' if self.llm_connected else 'offline'}")
+            self._log(f"LLM: {'connected' if self.llm_connected else 'offline (using heuristics)'}")
         except:
             self.llm_connected = False
+            self._log("LLM: offline (using heuristics)")
         
-        self._log("ToolkitAgent ready")
+        # Log initial goal
+        goal = self.goal_system.get_current_goal()
+        if goal:
+            self._log(f"GOAL: {goal.name}")
+            self._log(f"  -> {goal.description}")
+        
+        self._log("ToolkitAgent ready!")
         return True
     
     def _log(self, msg: str):
@@ -481,6 +493,109 @@ Which action should I take? Respond with just the action name."""
                 return "interact"
             return "explore"
     
+    def _get_goal_heuristic_action(self, situation: str, goal) -> str:
+        """Get action based on current goal and situation."""
+        import random
+        
+        if not goal:
+            return self._get_heuristic_action(situation)
+        
+        goal_id = goal.id
+        
+        # Goal-specific logic
+        if goal_id == "start_game":
+            if situation == "title":
+                return "start_game"
+            return "advance_dialog"
+        
+        elif goal_id == "complete_intro":
+            if situation == "dialog":
+                return "advance_dialog"
+            elif situation == "menu":
+                return "select_option"
+            return "advance_dialog"  # Keep pressing through intro
+        
+        elif goal_id == "leave_house":
+            if situation == "dialog":
+                return "advance_dialog"
+            # Try to find exit - usually down
+            directions = ["move_down", "move_down", "move_left", "move_right", "interact"]
+            return random.choice(directions)
+        
+        elif goal_id == "find_professor":
+            if situation == "dialog":
+                return "advance_dialog"
+            # Explore and interact with buildings/NPCs
+            actions = ["explore", "interact", "move_up", "interact"]
+            return random.choice(actions)
+        
+        elif goal_id == "get_starter":
+            if situation == "dialog":
+                return "advance_dialog"
+            elif situation == "menu":
+                return "select_option"
+            # Interact with Pokeballs
+            return "interact"
+        
+        # Default to situation-based
+        return self._get_heuristic_action(situation)
+    
+    def _get_llm_action_with_goal(self, state, situation: str, goal) -> Optional[str]:
+        """Ask LLM which action to take, considering current goal."""
+        if not self.llm_connected:
+            return None
+        
+        import requests
+        
+        # Build prompt with goal and available actions
+        available = self.toolkit.get_contextual_actions(situation)
+        actions_desc = "\n".join(f"- {a}: {self.toolkit.actions[a].description}" for a in available)
+        
+        goal_context = ""
+        if goal:
+            goal_context = f"""
+CURRENT GOAL: {goal.name}
+Goal description: {goal.description}
+Hints: {', '.join(goal.action_hints[:2])}
+"""
+        
+        prompt = f"""You are playing Pokemon. Choose the best action.
+{goal_context}
+Current situation: {situation}
+Location: ({state.player_position.x}, {state.player_position.y}) - {state.player_position.map_name}
+Party: {state.party_count} Pokemon
+Has starter: {state.has_starter}
+
+Available actions:
+{actions_desc}
+
+Which action best helps achieve the goal? Reply with ONLY the action name."""
+
+        try:
+            resp = requests.post(
+                f"{self.ollama_host}/api/generate",
+                json={
+                    "model": self.ollama_model,
+                    "prompt": prompt,
+                    "system": "You are a Pokemon player AI. Choose actions to achieve goals. Reply with ONLY an action name, nothing else.",
+                    "stream": False,
+                    "options": {"num_predict": 20, "temperature": 0.5}
+                },
+                timeout=8
+            )
+            
+            if resp.status_code == 200:
+                action_name = resp.json().get('response', '').strip().lower()
+                action_name = action_name.replace('"', '').replace("'", "")
+                # Get first word
+                action_name = action_name.split()[0] if action_name else ""
+                if action_name in self.toolkit.actions:
+                    return action_name
+        except Exception as e:
+            pass
+        
+        return None
+    
     def decide(self, agent_state) -> 'AgentAction':
         from .interface import AgentAction
         
@@ -502,21 +617,48 @@ Which action should I take? Respond with just the action name."""
         state = self.memory_manager.get_state()
         situation = self._analyze_situation(state)
         
+        # Check goal progress
+        goal = self.goal_system.get_current_goal()
+        if goal:
+            check = self.goal_system.check_goal_completion(state)
+            
+            # Log goal changes
+            if goal.id != self.last_goal_id:
+                self._log(f"=== GOAL: {goal.name} ===")
+                self._log(f"  {goal.description}")
+                self.last_goal_id = goal.id
+            
+            # Goal completed!
+            if check.is_complete:
+                self._log(f"✓ GOAL COMPLETE: {check.reason}")
+                next_goal = self.goal_system.advance_goal()
+                if next_goal:
+                    self._log(f"=== NEXT GOAL: {next_goal.name} ===")
+                    self._log(f"  {next_goal.description}")
+                else:
+                    self._log("🎉 ALL GOALS COMPLETED!")
+            elif check.progress > goal.progress:
+                goal.progress = check.progress
+                self._log(f"Progress: {int(check.progress * 100)}% - {check.reason}")
+        
         if situation != self.last_situation:
             self._log(f"Situation: {situation}")
             self.last_situation = situation
         
-        # Get action - try LLM, fallback to heuristic
+        # Get action - use goal hints + situation
         action_name = None
-        if self.llm_connected:
-            action_name = self._get_llm_action(state, situation)
         
+        # Try LLM with goal context
+        if self.llm_connected:
+            action_name = self._get_llm_action_with_goal(state, situation, goal)
+        
+        # Fallback to goal-aware heuristics
         if not action_name:
-            action_name = self._get_heuristic_action(situation)
+            action_name = self._get_goal_heuristic_action(situation, goal)
         
         # Execute action through toolkit
         result = self.toolkit.execute_action(action_name)
-        self._log(f"Action: {action_name} -> {result.message}")
+        self._log(f"{action_name}: {result.message}")
         
         self.current_result = result
         self.hold_remaining = result.hold_frames - 1
@@ -531,10 +673,13 @@ Which action should I take? Respond with just the action name."""
         return self.thinking_history.copy()
     
     def get_current_stage_info(self) -> Dict[str, Any]:
+        goal = self.goal_system.get_current_goal()
+        goal_status = self.goal_system.get_status()
         return {
-            'stage': self.last_situation.upper(),
-            'name': f"Toolkit - {self.last_situation.title()}",
-            'goal': "Using action toolkit to play",
+            'stage': goal.id if goal else "COMPLETE",
+            'name': goal.name if goal else "All Goals Done!",
+            'goal': goal.description if goal else "Explore freely",
+            'progress': f"{goal_status['completed']}/{goal_status['total']} goals",
         }
     
     def get_memory_state(self):
@@ -543,7 +688,13 @@ Which action should I take? Respond with just the action name."""
         return None
     
     def manual_advance_stage(self):
-        self._log("Manual reset")
+        """Skip to next goal."""
+        self._log("Manual: Skipping goal")
+        next_goal = self.goal_system.skip_goal()
+        if next_goal:
+            self._log(f"=== NEXT GOAL: {next_goal.name} ===")
+        else:
+            self._log("All goals complete!")
     
     def process_frame(self, state) -> Optional['AgentAction']:
         """Process a frame - called by manager."""
