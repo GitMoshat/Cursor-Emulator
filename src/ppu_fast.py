@@ -31,9 +31,9 @@ def render_bg_line_fast(
         tile_x = x >> 3
         pixel_x = x & 7
         
-        # Get tile index from tilemap
+        # Get tile index from tilemap (tilemap is at 0x9800 or 0x9C00, VRAM starts at 0x8000)
         tilemap_offset = (bg_tilemap - 0x8000) + tile_y * 32 + tile_x
-        tile_idx = vram_bank0[tilemap_offset]
+        tile_idx = int(vram_bank0[tilemap_offset])
         
         # Get attributes for GBC
         if cgb_mode:

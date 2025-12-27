@@ -9,10 +9,16 @@ import numpy as np
 
 from .memory import Memory
 from .cpu import CPU
-from .ppu import PPU
 
-# Note: JIT PPU available in ppu_fast.py if needed
-print("Using standard CPU and PPU")
+# Try to use JIT-accelerated PPU
+_ppu_version = "Standard"
+try:
+    from .ppu_fast import PPUFast as PPU
+    _ppu_version = "JIT"
+    print("Using JIT-accelerated PPU")
+except Exception as e:
+    from .ppu import PPU
+    print(f"Using standard PPU ({e})")
 
 
 class Emulator:
@@ -27,6 +33,7 @@ class Emulator:
     DOUBLE_SPEED = 8388608  # Hz
     CYCLES_PER_FRAME = 70224
     TARGET_FPS = 59.73
+    PPU_VERSION = _ppu_version  # "JIT" or "Standard"
     
     def __init__(self):
         self.memory = Memory()

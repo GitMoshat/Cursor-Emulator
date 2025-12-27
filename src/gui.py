@@ -48,7 +48,8 @@ class EmulatorGUI:
         
         # Initialize Pygame
         pygame.init()
-        pygame.display.set_caption(f"GBC Emulator - {emulator.rom_title or 'No ROM'}")
+        ppu_ver = getattr(emulator, 'PPU_VERSION', 'Unknown')
+        pygame.display.set_caption(f"GBC Emulator [{ppu_ver} PPU] - {emulator.rom_title or 'No ROM'}")
         
         self.screen = pygame.display.set_mode((self.window_width, self.window_height))
         self.clock = pygame.time.Clock()
