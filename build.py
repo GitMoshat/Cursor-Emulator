@@ -1,7 +1,6 @@
 """
 Build script for GBC Emulator
 Compiles the project into a standalone executable using PyInstaller.
-Optimized for smaller size and faster startup.
 """
 
 import subprocess
@@ -34,50 +33,32 @@ def main():
     if os.path.exists("GBCEmulator.spec"):
         os.remove("GBCEmulator.spec")
     
-    # Exclusions to reduce size - these are not needed at runtime
-    excludes = [
-        'matplotlib', 'scipy', 'pandas', 'PIL', 'tkinter',
-        'test', 'tests', 'unittest', 'doctest',
-        'pydoc', 'pdb', 'profile', 'cProfile',
-        'xml', 'xmlrpc', 'html', 'http.server',
-        'ftplib', 'smtplib', 'imaplib', 'poplib',
-        'telnetlib', 'uu', 'bz2', 'lzma',
-        'curses', 'lib2to3', 'idlelib',
-        'distutils', 'setuptools', 'pkg_resources',
-        'IPython', 'jupyter', 'notebook',
-        'numba.cuda',  # Don't need CUDA support
-        'llvmlite.tests',
-    ]
-    
-    exclude_args = []
-    for ex in excludes:
-        exclude_args.extend(['--exclude-module', ex])
-    
-    # PyInstaller command - optimized for size
+    # PyInstaller command - fixed for numba
     cmd = [
         sys.executable, "-m", "PyInstaller",
         "--name=GBCEmulator",
         "--onefile",
-        "--windowed",  # No console window
+        "--windowed",
         "--add-data", f"src;src",
-        # Core dependencies
+        # Numba requires ALL submodules
+        "--collect-all", "numba",
+        "--collect-all", "llvmlite",
+        # Other deps
+        "--collect-all", "pygame",
         "--hidden-import=numpy",
-        "--hidden-import=pygame", 
-        "--hidden-import=numba",
         "--hidden-import=requests",
-        "--hidden-import=json",
-        # Collect only what's needed
-        "--collect-submodules", "pygame",
-        "--collect-submodules", "numba.core",
-        "--collect-submodules", "llvmlite",
-        # Optimizations
-        "--strip",  # Strip symbols (Linux/Mac)
-        "--noupx",  # UPX can cause issues, skip it
-        *exclude_args,
+        # Exclude heavy unused stuff
+        "--exclude-module", "matplotlib",
+        "--exclude-module", "scipy", 
+        "--exclude-module", "pandas",
+        "--exclude-module", "tkinter",
+        "--exclude-module", "PIL",
+        "--exclude-module", "IPython",
+        "--exclude-module", "jupyter",
         "main.py"
     ]
     
-    print("\nRunning PyInstaller (optimized build)...")
+    print("\nRunning PyInstaller...")
     print()
     
     result = subprocess.run(cmd)

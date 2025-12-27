@@ -1,22 +1,27 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_all
 
-hiddenimports = ['numpy', 'pygame', 'numba', 'requests', 'json']
-hiddenimports += collect_submodules('pygame')
-hiddenimports += collect_submodules('numba.core')
-hiddenimports += collect_submodules('llvmlite')
+datas = [('src', 'src')]
+binaries = []
+hiddenimports = ['numpy', 'requests']
+tmp_ret = collect_all('numba')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+tmp_ret = collect_all('llvmlite')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+tmp_ret = collect_all('pygame')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(
     ['main.py'],
     pathex=[],
-    binaries=[],
-    datas=[('src', 'src')],
+    binaries=binaries,
+    datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['matplotlib', 'scipy', 'pandas', 'PIL', 'tkinter', 'test', 'tests', 'unittest', 'doctest', 'pydoc', 'pdb', 'profile', 'cProfile', 'xml', 'xmlrpc', 'html', 'http.server', 'ftplib', 'smtplib', 'imaplib', 'poplib', 'telnetlib', 'uu', 'bz2', 'lzma', 'curses', 'lib2to3', 'idlelib', 'distutils', 'setuptools', 'pkg_resources', 'IPython', 'jupyter', 'notebook', 'numba.cuda', 'llvmlite.tests'],
+    excludes=['matplotlib', 'scipy', 'pandas', 'tkinter', 'PIL', 'IPython', 'jupyter'],
     noarchive=False,
     optimize=0,
 )
@@ -31,8 +36,8 @@ exe = EXE(
     name='GBCEmulator',
     debug=False,
     bootloader_ignore_signals=False,
-    strip=True,
-    upx=False,
+    strip=False,
+    upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,
