@@ -78,12 +78,30 @@ class MenuState:
     window_top: int = 0
     window_bottom: int = 18  # Default to bottom of screen
     window_left: int = 0
-    window_right: int = 20  # Default to right of screen
+    window_right: int = 20  # Default to screen right
     # Calculated pixel positions for current selection
     selection_pixel_x: int = 0
     selection_pixel_y: int = 0
     selection_pixel_w: int = 0
     selection_pixel_h: int = 0
+
+
+@dataclass
+class NameEntryState:
+    """State for name entry screen."""
+    is_active: bool = False
+    grid_x: int = 0  # Cursor X on character grid (0-9)
+    grid_y: int = 0  # Cursor Y on character grid (0-4)
+    current_name: str = ""  # Name entered so far
+    name_length: int = 0  # Current length of name
+    max_length: int = 7  # Max name length (usually 7 in Pokemon)
+    # Character at current grid position
+    current_char: str = ""
+    # Is on special buttons (lower, DEL, END)
+    on_lower: bool = False
+    on_del: bool = False
+    on_end: bool = False
+    is_lowercase: bool = False  # Currently in lowercase mode
 
 
 @dataclass
@@ -98,6 +116,9 @@ class GameState:
     player_position: Position = field(default_factory=Position)
     money: int = 0
     badges: int = 0
+    
+    # Name entry state
+    name_entry: NameEntryState = field(default_factory=NameEntryState)
     play_time_hours: int = 0
     play_time_minutes: int = 0
     
@@ -346,6 +367,15 @@ POKEMON_CRYSTAL_ADDRESSES = {
     **POKEMON_GSC_ADDRESSES,
     # Crystal-specific overrides if needed
     'mobile_adapter': 0xC2D5,  # Crystal had mobile features
+    
+    # Name entry screen addresses (Crystal/GSC)
+    'name_entry_cursor_x': 0xCFA1,  # wNamingScreenCursorX (0-9 for grid, special for lower/DEL/END)
+    'name_entry_cursor_y': 0xCFA2,  # wNamingScreenCursorY (0-4 for grid rows)
+    'name_entry_buffer': 0xD073,    # wNamingScreenBuffer - current name being entered
+    'name_entry_length': 0xD07A,    # Current length of entered name
+    'name_entry_max_len': 0xD07B,   # Max allowed length
+    'name_entry_mode': 0xCFA3,      # 0=uppercase, 1=lowercase
+    'name_entry_type': 0xCFA0,      # What we're naming (player, rival, pokemon)
 }
 
 # Pokemon species names (Gen 2 / Crystal order - index = national dex - 1)
@@ -766,6 +796,10 @@ class MemoryManager:
                 gs = self.read_byte(self.addresses['game_state'])
                 state.game_started = gs not in [0, 0xFF]  # 0 usually means title screen
             
+            # Name entry state - read if on name entry screen
+            if state.menu.screen_type == "name_entry":
+                state.name_entry = self._read_name_entry_state()
+            
             # Store some raw values for debugging
             state.raw_values = {
                 'game_state': self.read_byte(self.addresses.get('game_state', 0)),
@@ -776,6 +810,70 @@ class MemoryManager:
             print(f"[MemoryManager] Error reading state: {e}")
         
         return state
+    
+    def _read_name_entry_state(self) -> NameEntryState:
+        """Read name entry screen state from memory."""
+        entry = NameEntryState()
+        entry.is_active = True
+        
+        # Read cursor position on character grid
+        if 'name_entry_cursor_x' in self.addresses:
+            entry.grid_x = self.read_byte(self.addresses['name_entry_cursor_x'])
+        if 'name_entry_cursor_y' in self.addresses:
+            entry.grid_y = self.read_byte(self.addresses['name_entry_cursor_y'])
+        
+        # Read current name buffer
+        if 'name_entry_buffer' in self.addresses:
+            name_bytes = self.read_bytes(self.addresses['name_entry_buffer'], 8)
+            # Pokemon uses special character encoding
+            entry.current_name = self._decode_pokemon_string(name_bytes)
+            entry.name_length = len(entry.current_name.strip())
+        
+        # Read mode (upper/lowercase)
+        if 'name_entry_mode' in self.addresses:
+            entry.is_lowercase = self.read_byte(self.addresses['name_entry_mode']) != 0
+        
+        # Determine if on special buttons based on grid position
+        # In Crystal, the bottom row (y=4 or 5) has lower/DEL/END
+        if entry.grid_y >= 4:
+            if entry.grid_x < 3:
+                entry.on_lower = True
+            elif entry.grid_x < 6:
+                entry.on_del = True
+            else:
+                entry.on_end = True
+        
+        # Get character at current position
+        entry.current_char = self._get_grid_char(entry.grid_x, entry.grid_y, entry.is_lowercase)
+        
+        return entry
+    
+    def _get_grid_char(self, x: int, y: int, lowercase: bool = False) -> str:
+        """Get character at grid position on name entry screen."""
+        # Pokemon Crystal character grid layout (10 columns x 5 rows + special row)
+        UPPER_GRID = [
+            "ABCDEFGHIJ",
+            "KLMNOPQRST",
+            "UVWXYZ    ",
+            "x?!.,-   ",  # x is multiplication sign, special chars
+            "lower DEL END",
+        ]
+        LOWER_GRID = [
+            "abcdefghij",
+            "klmnopqrst",
+            "uvwxyz    ",
+            "x?!.,-   ",
+            "UPPER DEL END",
+        ]
+        
+        grid = LOWER_GRID if lowercase else UPPER_GRID
+        
+        if y >= len(grid):
+            return ""
+        row = grid[y]
+        if x >= len(row):
+            return ""
+        return row[x]
     
     def _detect_screen_type(self, state: GameState) -> str:
         """Detect what type of screen/menu we're on."""
@@ -789,6 +887,26 @@ class MemoryManager:
         script_running = self.read_byte(self.addresses.get('script_running', 0))
         wram_state = self.read_byte(self.addresses.get('wram_state', 0))
         
+        # Check for name entry screen - look for the characteristic pattern
+        # Name entry has cursor_y values 0-5 (rows of character grid)
+        # and cursor_x values 0-9 (columns)
+        if 'name_entry_type' in self.addresses:
+            name_entry_type = self.read_byte(self.addresses['name_entry_type'])
+            if name_entry_type > 0:  # Active name entry
+                return "name_entry"
+        
+        # Alternative name entry detection: check if we're in intro with menu open
+        # and cursor values are in character grid range
+        cursor_y = state.menu.cursor_y
+        cursor_x = state.menu.cursor_x
+        if (game_state == 1 or intro_scene != 0) and state.party_count == 0:
+            # During intro - check for name entry pattern
+            # Name entry grid is typically 10 columns x 5+ rows
+            if cursor_x <= 10 and cursor_y <= 6 and state.menu.in_menu:
+                # Likely name entry screen - verify by checking cursor range
+                if cursor_y >= 2 or cursor_x >= 2:  # Not a simple 2-option menu
+                    return "name_entry"
+        
         # Title screen detection - usually game_state is 0 at title
         if game_state == 0 and state.party_count == 0 and not state.game_started:
             return "title"
@@ -796,11 +914,9 @@ class MemoryManager:
         # New game / intro scenes
         if intro_scene != 0 or (game_state == 1 and state.party_count == 0):
             # During intro/new game
-            if state.menu.cursor_position in [0, 1]:
+            if state.menu.cursor_position in [0, 1] and cursor_y <= 1 and cursor_x <= 1:
                 # Could be gender select (BOY/GIRL) or other two-option
                 return "gender_select"
-            elif state.menu.in_menu:
-                return "name_entry"
             return "intro"
         
         # Check if in dialog/text
@@ -810,9 +926,6 @@ class MemoryManager:
         # Regular menu open
         if state.menu.in_menu:
             # Distinguish menu types if possible
-            cursor_y = state.menu.cursor_y
-            cursor_x = state.menu.cursor_x
-            
             if cursor_y <= 1 and cursor_x <= 1:
                 # Small menu - likely yes/no or options
                 return "option_menu"
@@ -846,6 +959,54 @@ class MemoryManager:
         sel_h = 16  # Default height (2 tiles)
         
         screen_type = menu.screen_type
+        
+        # Handle name entry screen specially
+        if screen_type == "name_entry":
+            # Name entry character grid
+            # Grid starts around (16, 56) and each cell is 16x16 pixels
+            # Grid is 10 columns x 5 rows
+            GRID_START_X = 16
+            GRID_START_Y = 56
+            CELL_W = 16
+            CELL_H = 16
+            
+            grid_x = cursor_x if cursor_x <= 9 else 0
+            grid_y = cursor_y if cursor_y <= 5 else 0
+            
+            # Check for bottom row (lower/DEL/END buttons)
+            if cursor_y >= 4:
+                # Special buttons row
+                if cursor_x < 3:
+                    # "lower" button
+                    sel_x = 16
+                    sel_y = 120
+                    sel_w = 40
+                    sel_h = 14
+                elif cursor_x < 6:
+                    # "DEL" button
+                    sel_x = 72
+                    sel_y = 120
+                    sel_w = 32
+                    sel_h = 14
+                else:
+                    # "END" button
+                    sel_x = 120
+                    sel_y = 120
+                    sel_w = 32
+                    sel_h = 14
+            else:
+                # Character grid cell
+                sel_x = GRID_START_X + (grid_x * CELL_W)
+                sel_y = GRID_START_Y + (grid_y * CELL_H)
+                sel_w = 14
+                sel_h = 14
+            
+            menu.selection_pixel_x = sel_x
+            menu.selection_pixel_y = sel_y
+            menu.selection_pixel_w = sel_w
+            menu.selection_pixel_h = sel_h
+            menu.selection_y_pixel = sel_y
+            return sel_y
         
         if menu.text_active and not menu.in_menu:
             # Dialog text box - always at bottom of screen

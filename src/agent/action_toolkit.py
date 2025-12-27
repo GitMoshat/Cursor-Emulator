@@ -234,6 +234,61 @@ class ActionToolkit:
             ),
             self._handle_mash_a
         )
+        
+        # === Name Entry Actions ===
+        self.register_action(
+            ActionDefinition(
+                name="enter_name",
+                description="Enter a random Pokemon-style name on the name entry screen",
+                when_to_use="When on the YOUR NAME? screen with character grid",
+            ),
+            self._handle_enter_name
+        )
+        
+        self.register_action(
+            ActionDefinition(
+                name="name_grid_right",
+                description="Move cursor right on name entry grid",
+                when_to_use="To navigate to the next character on name entry screen",
+            ),
+            self._handle_name_grid_right
+        )
+        
+        self.register_action(
+            ActionDefinition(
+                name="name_grid_left",
+                description="Move cursor left on name entry grid",
+                when_to_use="To navigate to previous character on name entry screen",
+            ),
+            self._handle_name_grid_left
+        )
+        
+        self.register_action(
+            ActionDefinition(
+                name="name_grid_down",
+                description="Move cursor down on name entry grid",
+                when_to_use="To move down a row on name entry screen",
+            ),
+            self._handle_name_grid_down
+        )
+        
+        self.register_action(
+            ActionDefinition(
+                name="name_select_char",
+                description="Select current character on name entry grid",
+                when_to_use="To add the highlighted character to the name",
+            ),
+            self._handle_name_select_char
+        )
+        
+        self.register_action(
+            ActionDefinition(
+                name="name_confirm",
+                description="Confirm name entry (press END)",
+                when_to_use="After entering characters, to confirm the name",
+            ),
+            self._handle_name_confirm
+        )
     
     def register_action(self, definition: ActionDefinition, handler: Callable):
         """Register a new action."""
@@ -261,6 +316,7 @@ class ActionToolkit:
             "menu": ["select_option", "menu_up", "menu_down", "cancel"],
             "battle": ["battle_fight", "select_option", "battle_run"],
             "overworld": ["interact", "explore", "move_up", "move_down", "move_left", "move_right", "open_menu"],
+            "name_entry": ["enter_name", "name_select_char", "name_grid_right", "name_grid_down", "name_confirm"],
             "unknown": ["interact", "start_game", "advance_dialog"],
         }
         return suggestions.get(situation, suggestions["unknown"])
@@ -339,6 +395,28 @@ class ActionToolkit:
     
     def _handle_mash_a(self, **kwargs) -> ActionResult:
         return ActionResult(True, [Button.A], 3, "Mashing A", "mash_a")
+    
+    # === Name Entry Handlers ===
+    
+    def _handle_enter_name(self, **kwargs) -> ActionResult:
+        """Start entering a random name - handled by ToolkitAgent's name entry state machine."""
+        # This signals the agent to begin the name entry sequence
+        return ActionResult(True, [], 1, "Starting name entry", "name_grid_right")
+    
+    def _handle_name_grid_right(self, **kwargs) -> ActionResult:
+        return ActionResult(True, [Button.RIGHT], 4, "Grid right")
+    
+    def _handle_name_grid_left(self, **kwargs) -> ActionResult:
+        return ActionResult(True, [Button.LEFT], 4, "Grid left")
+    
+    def _handle_name_grid_down(self, **kwargs) -> ActionResult:
+        return ActionResult(True, [Button.DOWN], 4, "Grid down")
+    
+    def _handle_name_select_char(self, **kwargs) -> ActionResult:
+        return ActionResult(True, [Button.A], 6, "Select char", "name_grid_right")
+    
+    def _handle_name_confirm(self, **kwargs) -> ActionResult:
+        return ActionResult(True, [Button.A], 8, "Confirm name")
 
 
 class ToolkitAgent:
@@ -390,8 +468,107 @@ class ToolkitAgent:
             'label': '',              # Label to show
         }
         
+        # Name entry state machine
+        self.name_entry_active = False
+        self.name_to_enter = ""
+        self.name_char_index = 0  # Which character we're entering
+        self.name_entry_step = "idle"  # idle, navigating, selecting, confirming
+        self.target_grid_x = 0
+        self.target_grid_y = 0
+        
         import time
         self.time = time
+    
+    def _generate_random_name(self) -> str:
+        """Generate a random Pokemon-style name."""
+        import random
+        # Pokemon-style names - short, memorable, mix of styles
+        POKEMON_NAMES = [
+            "RED", "BLUE", "ASH", "GOLD", "LEAF",
+            "ETHAN", "LYRA", "KRIS", "MAY", "DAWN",
+            "LUCAS", "BARRY", "CYNTHIA", "LANCE", "OAK",
+            "GARY", "BROCK", "MISTY", "ERIKA", "BLAINE",
+            "ACE", "MAX", "REX", "LEO", "NINA",
+            "ZACK", "LUNA", "JADE", "RUBY", "ALEX",
+            "SAM", "KAI", "RAY", "SKY", "STAR",
+        ]
+        return random.choice(POKEMON_NAMES)
+    
+    def _get_char_grid_position(self, char: str) -> tuple:
+        """Get grid (x, y) position for a character on the name entry screen."""
+        # Pokemon Crystal character grid layout (uppercase)
+        # Row 0: A B C D E F G H I J
+        # Row 1: K L M N O P Q R S T
+        # Row 2: U V W X Y Z (spaces)
+        # Row 3: special characters
+        # Row 4: lower DEL END
+        
+        GRID = [
+            "ABCDEFGHIJ",
+            "KLMNOPQRST",
+            "UVWXYZ    ",
+            "          ",  # Special chars - skip
+        ]
+        
+        char = char.upper()
+        for y, row in enumerate(GRID):
+            if char in row:
+                x = row.index(char)
+                return (x, y)
+        
+        # Default to A if character not found
+        return (0, 0)
+    
+    def _get_name_entry_action(self, state) -> str:
+        """Get next action for name entry state machine."""
+        import random
+        
+        name_entry = state.name_entry
+        current_x = state.menu.cursor_x
+        current_y = state.menu.cursor_y
+        
+        # Start name entry if not active
+        if not self.name_entry_active:
+            self.name_to_enter = self._generate_random_name()
+            self.name_char_index = 0
+            self.name_entry_active = True
+            self.name_entry_step = "navigating"
+            self._log(f"NAME ENTRY: Will enter '{self.name_to_enter}'")
+            # Get position of first character
+            self.target_grid_x, self.target_grid_y = self._get_char_grid_position(self.name_to_enter[0])
+        
+        # Check if done entering all characters
+        if self.name_char_index >= len(self.name_to_enter):
+            # Navigate to END button and confirm
+            self.name_entry_step = "confirming"
+            # END is at bottom row, right side (around x=7-9, y=4)
+            if current_y < 4:
+                return "name_grid_down"
+            if current_x < 7:
+                return "name_grid_right"
+            # At END position, confirm
+            self._log("NAME ENTRY: Confirming name")
+            self.name_entry_active = False
+            return "name_confirm"
+        
+        # Get target position for current character
+        target_char = self.name_to_enter[self.name_char_index]
+        self.target_grid_x, self.target_grid_y = self._get_char_grid_position(target_char)
+        
+        # Navigate to target position
+        if current_y < self.target_grid_y:
+            return "name_grid_down"
+        elif current_y > self.target_grid_y:
+            return "menu_up"  # Use menu_up for grid up
+        elif current_x < self.target_grid_x:
+            return "name_grid_right"
+        elif current_x > self.target_grid_x:
+            return "name_grid_left"
+        else:
+            # At correct position - select character
+            self._log(f"NAME ENTRY: Selecting '{target_char}' ({self.name_char_index + 1}/{len(self.name_to_enter)})")
+            self.name_char_index += 1
+            return "name_select_char"
     
     def initialize(self, **kwargs) -> bool:
         from .memory_manager import MemoryManager
@@ -431,6 +608,11 @@ class ToolkitAgent:
     
     def _analyze_situation(self, state) -> str:
         """Determine current situation."""
+        # Check screen type from memory manager first
+        screen_type = state.menu.screen_type
+        if screen_type == "name_entry":
+            return "name_entry"
+        
         if state.battle.in_battle:
             return "battle"
         if state.menu.text_active:
@@ -486,12 +668,17 @@ Which action should I take? Respond with just the action name."""
         
         return None
     
-    def _get_heuristic_action(self, situation: str) -> str:
+    def _get_heuristic_action(self, situation: str, state=None) -> str:
         """Get action using simple heuristics."""
         if situation == "title":
             return "start_game"
         elif situation == "dialog":
             return "advance_dialog"
+        elif situation == "name_entry":
+            # Use name entry state machine
+            if state:
+                return self._get_name_entry_action(state)
+            return "enter_name"
         elif situation == "menu":
             return "select_option"
         elif situation == "battle":
@@ -502,12 +689,16 @@ Which action should I take? Respond with just the action name."""
                 return "interact"
             return "explore"
     
-    def _get_goal_heuristic_action(self, situation: str, goal) -> str:
+    def _get_goal_heuristic_action(self, situation: str, goal, state=None) -> str:
         """Get action based on current goal and situation."""
         import random
         
+        # Handle name entry with state machine - always use it regardless of goal
+        if situation == "name_entry" and state:
+            return self._get_name_entry_action(state)
+        
         if not goal:
-            return self._get_heuristic_action(situation)
+            return self._get_heuristic_action(situation, state)
         
         goal_id = goal.id
         
@@ -547,7 +738,7 @@ Which action should I take? Respond with just the action name."""
             return "interact"
         
         # Default to situation-based
-        return self._get_heuristic_action(situation)
+        return self._get_heuristic_action(situation, state)
     
     def _get_llm_action_with_goal(self, state, situation: str, goal) -> Optional[str]:
         """Ask LLM which action to take, considering current goal."""
@@ -688,7 +879,7 @@ Which action? Reply with ONLY the action name."""
         
         # Fallback to goal-aware heuristics
         if not action_name:
-            action_name = self._get_goal_heuristic_action(situation, goal)
+            action_name = self._get_goal_heuristic_action(situation, goal, state)
             self._log(f"Heuristic chose: {action_name}")
         
         # Execute action through toolkit
@@ -721,7 +912,28 @@ Which action? Reply with ONLY the action name."""
         # ALWAYS update focus based on current game state, not just action
         # Priority: dialog > menu > battle > other
         
-        if menu.text_active:
+        # Handle name entry screen first
+        if situation == "name_entry" or menu.screen_type == "name_entry":
+            # Show what character we're targeting
+            target_char = ""
+            if self.name_entry_active and self.name_char_index < len(self.name_to_enter):
+                target_char = self.name_to_enter[self.name_char_index]
+            elif self.name_entry_active:
+                target_char = "END"
+            
+            label = f"AI: Name '{self.name_to_enter}'" if self.name_entry_active else "AI: Name entry"
+            if target_char:
+                label += f" -> {target_char}"
+            
+            self.current_focus = {
+                'type': 'name_entry',
+                'action': 'Enter name',
+                'target': target_char,
+                'rect': (sel_x, sel_y, sel_w, sel_h) if sel_x > 0 else (16, 56, 14, 14),
+                'label': label,
+            }
+        
+        elif menu.text_active:
             # Dialog box is active - show it regardless of action
             self.current_focus = {
                 'type': 'dialog',
