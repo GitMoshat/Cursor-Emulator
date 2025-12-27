@@ -449,7 +449,7 @@ class ToolkitAgent:
         self.ollama_host = self.config.ollama_host
         self.ollama_model = "llama3.2"
         self.llm_connected = False
-        self.fast_mode = True  # Disable LLM for max FPS, use heuristics only
+        self.fast_mode = False  # Keep LLM enabled - do not disable
         
         # State
         self.thinking_history: List[str] = []
