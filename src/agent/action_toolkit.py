@@ -617,6 +617,21 @@ Which action? Reply with ONLY the action name."""
     def decide(self, agent_state) -> 'AgentAction':
         from .interface import AgentAction
         
+        if not self.memory_manager or not self.toolkit:
+            return AgentAction(buttons_to_press=[Button.A], reasoning="No toolkit")
+        
+        # Get state and situation - ALWAYS update this every frame
+        state = self.memory_manager.get_state()
+        situation = self._analyze_situation(state)
+        
+        # Update focus EVERY frame based on current state (even during hold)
+        # This ensures the debug overlay stays in sync with game state
+        if self.current_result:
+            current_action = self.current_result.message.split(':')[0] if ':' in self.current_result.message else "advance_dialog"
+        else:
+            current_action = "advance_dialog"
+        self._update_focus(current_action, state, situation)
+        
         # Continue current action
         if self.hold_remaining > 0:
             self.hold_remaining -= 1
@@ -627,13 +642,6 @@ Which action? Reply with ONLY the action name."""
                     reasoning=self.current_result.message
                 )
             return AgentAction()
-        
-        if not self.memory_manager or not self.toolkit:
-            return AgentAction(buttons_to_press=[Button.A], reasoning="No toolkit")
-        
-        # Get state and situation
-        state = self.memory_manager.get_state()
-        situation = self._analyze_situation(state)
         
         # Log detailed perception of the state
         self._log_perception(state, situation)
@@ -710,17 +718,16 @@ Which action? Reply with ONLY the action name."""
         sel_w = menu.selection_pixel_w
         sel_h = menu.selection_pixel_h
         
-        # Log what we're seeing from memory
-        self._log(f"[FOCUS] cursor={cursor} xy=({menu.cursor_x},{menu.cursor_y}) win=({menu.window_left},{menu.window_top})-({menu.window_right},{menu.window_bottom})")
-        self._log(f"[FOCUS] selection rect: ({sel_x},{sel_y}) {sel_w}x{sel_h}")
+        # ALWAYS update focus based on current game state, not just action
+        # Priority: dialog > menu > battle > other
         
-        if menu.text_active and action_name == "advance_dialog":
-            # Dialog box - use calculated position
+        if menu.text_active:
+            # Dialog box is active - show it regardless of action
             self.current_focus = {
                 'type': 'dialog',
                 'action': 'Press A',
                 'target': 'Dialog',
-                'rect': (sel_x, sel_y, sel_w, sel_h),
+                'rect': (sel_x, sel_y, sel_w, sel_h) if sel_x > 0 else (4, 96, 152, 46),  # Fallback if not calculated
                 'label': f'AI: Reading dialog',
             }
         
@@ -736,11 +743,14 @@ Which action? Reply with ONLY the action name."""
             else:
                 opt_name = f"Option {cursor}"
             
+            # Use calculated rect or fallback
+            rect = (sel_x, sel_y, sel_w, sel_h) if sel_x > 0 else (88, 40 + cursor * 16, 48, 14)
+            
             self.current_focus = {
                 'type': 'menu_option',
                 'action': 'Select',
                 'target': opt_name,
-                'rect': (sel_x, sel_y, sel_w, sel_h),
+                'rect': rect,
                 'label': f'AI: {opt_name}',
             }
         
@@ -789,12 +799,13 @@ Which action? Reply with ONLY the action name."""
             }
         
         else:
+            # Default focus - show what we're doing
             self.current_focus = {
                 'type': 'none',
-                'action': action_name,
+                'action': action_name or 'waiting',
                 'target': '',
-                'rect': None,
-                'label': f'AI: {action_name}',
+                'rect': (0, 0, 0, 0),  # Empty rect, won't draw
+                'label': f'AI: {action_name or "waiting"}',
             }
     
     def get_focus(self) -> dict:

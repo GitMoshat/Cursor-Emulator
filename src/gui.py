@@ -513,30 +513,32 @@ class EmulatorGUI:
         # Draw AI's focus rectangle
         if focus and focus.get('rect'):
             rx, ry, rw, rh = focus['rect']
-            # Convert game coordinates to screen coordinates
-            screen_x = display_x + int(rx * scale_x)
-            screen_y = display_y + int(ry * scale_y)
-            screen_w = int(rw * scale_x)
-            screen_h = int(rh * scale_y)
-            
-            # Draw thick pulsing border
-            pygame.draw.rect(self.screen, COLOR_FOCUS, 
-                            (screen_x - 2, screen_y - 2, screen_w + 4, screen_h + 4), 4)
-            
-            # Draw corner brackets for emphasis
-            bracket_len = min(screen_w, screen_h) // 3
-            # Top-left
-            pygame.draw.line(self.screen, COLOR_LABEL, (screen_x - 4, screen_y - 4), (screen_x - 4 + bracket_len, screen_y - 4), 2)
-            pygame.draw.line(self.screen, COLOR_LABEL, (screen_x - 4, screen_y - 4), (screen_x - 4, screen_y - 4 + bracket_len), 2)
-            # Top-right
-            pygame.draw.line(self.screen, COLOR_LABEL, (screen_x + screen_w + 4 - bracket_len, screen_y - 4), (screen_x + screen_w + 4, screen_y - 4), 2)
-            pygame.draw.line(self.screen, COLOR_LABEL, (screen_x + screen_w + 4, screen_y - 4), (screen_x + screen_w + 4, screen_y - 4 + bracket_len), 2)
-            # Bottom-left
-            pygame.draw.line(self.screen, COLOR_LABEL, (screen_x - 4, screen_y + screen_h + 4 - bracket_len), (screen_x - 4, screen_y + screen_h + 4), 2)
-            pygame.draw.line(self.screen, COLOR_LABEL, (screen_x - 4, screen_y + screen_h + 4), (screen_x - 4 + bracket_len, screen_y + screen_h + 4), 2)
-            # Bottom-right
-            pygame.draw.line(self.screen, COLOR_LABEL, (screen_x + screen_w + 4, screen_y + screen_h + 4 - bracket_len), (screen_x + screen_w + 4, screen_y + screen_h + 4), 2)
-            pygame.draw.line(self.screen, COLOR_LABEL, (screen_x + screen_w + 4 - bracket_len, screen_y + screen_h + 4), (screen_x + screen_w + 4, screen_y + screen_h + 4), 2)
+            # Skip if rect is empty/invalid
+            if rw > 0 and rh > 0:
+                # Convert game coordinates to screen coordinates
+                screen_x = display_x + int(rx * scale_x)
+                screen_y = display_y + int(ry * scale_y)
+                screen_w = int(rw * scale_x)
+                screen_h = int(rh * scale_y)
+                
+                # Draw thick pulsing border
+                pygame.draw.rect(self.screen, COLOR_FOCUS, 
+                                (screen_x - 2, screen_y - 2, screen_w + 4, screen_h + 4), 4)
+                
+                # Draw corner brackets for emphasis
+                bracket_len = min(screen_w, screen_h) // 3
+                # Top-left
+                pygame.draw.line(self.screen, COLOR_LABEL, (screen_x - 4, screen_y - 4), (screen_x - 4 + bracket_len, screen_y - 4), 2)
+                pygame.draw.line(self.screen, COLOR_LABEL, (screen_x - 4, screen_y - 4), (screen_x - 4, screen_y - 4 + bracket_len), 2)
+                # Top-right
+                pygame.draw.line(self.screen, COLOR_LABEL, (screen_x + screen_w + 4 - bracket_len, screen_y - 4), (screen_x + screen_w + 4, screen_y - 4), 2)
+                pygame.draw.line(self.screen, COLOR_LABEL, (screen_x + screen_w + 4, screen_y - 4), (screen_x + screen_w + 4, screen_y - 4 + bracket_len), 2)
+                # Bottom-left
+                pygame.draw.line(self.screen, COLOR_LABEL, (screen_x - 4, screen_y + screen_h + 4 - bracket_len), (screen_x - 4, screen_y + screen_h + 4), 2)
+                pygame.draw.line(self.screen, COLOR_LABEL, (screen_x - 4, screen_y + screen_h + 4), (screen_x - 4 + bracket_len, screen_y + screen_h + 4), 2)
+                # Bottom-right
+                pygame.draw.line(self.screen, COLOR_LABEL, (screen_x + screen_w + 4, screen_y + screen_h + 4 - bracket_len), (screen_x + screen_w + 4, screen_y + screen_h + 4), 2)
+                pygame.draw.line(self.screen, COLOR_LABEL, (screen_x + screen_w + 4 - bracket_len, screen_y + screen_h + 4), (screen_x + screen_w + 4, screen_y + screen_h + 4), 2)
         
         # Draw AI focus label at top
         if focus and focus.get('label'):
