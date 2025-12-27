@@ -381,6 +381,15 @@ class ToolkitAgent:
         self.current_result: Optional[ActionResult] = None
         self.action_history: List = []
         
+        # Debug focus - what the AI is looking at / interacting with
+        self.current_focus = {
+            'type': 'none',           # 'dialog', 'menu_option', 'button', 'area', 'player'
+            'action': '',             # What action is being taken
+            'target': '',             # What is being targeted
+            'rect': None,             # (x, y, w, h) in game pixels (160x144)
+            'label': '',              # Label to show
+        }
+        
         import time
         self.time = time
     
@@ -678,6 +687,9 @@ Which action? Reply with ONLY the action name."""
         result = self.toolkit.execute_action(action_name)
         self._log(f"→ {action_name}: {result.message}")
         
+        # Update debug focus based on action and game state
+        self._update_focus(action_name, state, situation)
+        
         self.current_result = result
         self.hold_remaining = result.hold_frames - 1
         
@@ -686,6 +698,116 @@ Which action? Reply with ONLY the action name."""
             hold_frames=result.hold_frames,
             reasoning=f"{action_name}: {result.message}"
         )
+    
+    def _update_focus(self, action_name: str, state, situation: str):
+        """Update debug focus to show what the AI is interacting with."""
+        cursor = state.menu.cursor_position
+        
+        if action_name == "advance_dialog" or situation == "dialog":
+            # Focus on dialog box at bottom of screen
+            self.current_focus = {
+                'type': 'dialog',
+                'action': 'Press A',
+                'target': 'Dialog Box',
+                'rect': (4, 96, 152, 46),  # Dialog box area
+                'label': f'AI: Advancing dialog',
+            }
+        
+        elif action_name == "select_option" and situation == "menu":
+            screen = state.menu.screen_type
+            if screen == "gender_select":
+                # BOY at Y~56, GIRL at Y~72
+                opt_y = 56 + cursor * 16
+                opt_name = "BOY" if cursor == 0 else "GIRL"
+                self.current_focus = {
+                    'type': 'menu_option',
+                    'action': 'Select',
+                    'target': opt_name,
+                    'rect': (88, opt_y, 48, 14),
+                    'label': f'AI: Selecting {opt_name}',
+                }
+            else:
+                # Generic option
+                opt_y = 72 + cursor * 16
+                self.current_focus = {
+                    'type': 'menu_option',
+                    'action': 'Select',
+                    'target': f'Option {cursor}',
+                    'rect': (88, opt_y, 56, 14),
+                    'label': f'AI: Selecting option {cursor}',
+                }
+        
+        elif action_name == "start_game" or situation == "title":
+            self.current_focus = {
+                'type': 'button',
+                'action': 'Press START',
+                'target': 'Title Screen',
+                'rect': (40, 100, 80, 20),  # Approximate "Press Start" area
+                'label': 'AI: Starting game',
+            }
+        
+        elif action_name in ["move_up", "move_down", "move_left", "move_right", "explore"]:
+            # Player movement - focus on player
+            direction = action_name.replace("move_", "").upper() if "move_" in action_name else "EXPLORING"
+            self.current_focus = {
+                'type': 'player',
+                'action': f'Move {direction}',
+                'target': 'Player',
+                'rect': (72, 64, 16, 16),  # Player center position
+                'label': f'AI: Moving {direction}',
+            }
+        
+        elif action_name == "interact":
+            # Interacting with something in front of player
+            facing = state.player_position.facing
+            px, py = 80, 72  # Player center
+            if facing == "up":
+                target_rect = (72, 48, 16, 16)
+            elif facing == "down":
+                target_rect = (72, 80, 16, 16)
+            elif facing == "left":
+                target_rect = (56, 64, 16, 16)
+            else:  # right
+                target_rect = (88, 64, 16, 16)
+            
+            self.current_focus = {
+                'type': 'interact',
+                'action': 'Press A',
+                'target': f'Object ({facing})',
+                'rect': target_rect,
+                'label': f'AI: Interacting {facing}',
+            }
+        
+        elif situation == "battle":
+            # Battle menu focus
+            menu_opts = ["FIGHT", "PKMN", "ITEM", "RUN"]
+            menu_state = state.battle.menu_state
+            opt_name = menu_opts[menu_state] if menu_state < 4 else "?"
+            col = menu_state % 2
+            row = menu_state // 2
+            opt_x = 80 + col * 40
+            opt_y = 112 + row * 16
+            self.current_focus = {
+                'type': 'battle_menu',
+                'action': 'Select',
+                'target': opt_name,
+                'rect': (opt_x, opt_y, 36, 14),
+                'label': f'AI: {opt_name}',
+            }
+        
+        else:
+            # Default - no specific focus
+            self.current_focus = {
+                'type': 'none',
+                'action': action_name,
+                'target': '',
+                'rect': None,
+                'label': f'AI: {action_name}',
+            }
+    
+    def get_focus(self) -> dict:
+        """Get current debug focus for GUI overlay."""
+        return self.current_focus
     
     def _log_perception(self, state, situation: str):
         """Minimal - raw LLM I/O is the main output."""

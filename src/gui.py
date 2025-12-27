@@ -498,43 +498,67 @@ class EmulatorGUI:
         scale_x = self.game_width / 160
         scale_y = self.game_height / 144
         
-        # Get memory state for scanning info
-        mem_state = None
-        if hasattr(self.agent_manager.agent, 'get_memory_state'):
-            mem_state = self.agent_manager.agent.get_memory_state()
+        import time
+        pulse = (int(time.time() * 6) % 2) == 0
         
-        if not mem_state:
-            return
+        # Get AI's focus - what it's looking at / interacting with
+        focus = None
+        if hasattr(self.agent_manager.agent, 'get_focus'):
+            focus = self.agent_manager.agent.get_focus()
         
         # Colors
-        COLOR_FOCUS = (255, 50, 50)       # Red - current focus/selection
-        COLOR_MENU = (255, 100, 100)      # Light red - menu area
-        COLOR_CURSOR = (255, 255, 0)      # Yellow - cursor position
-        COLOR_OPTION = (255, 200, 50)     # Orange - selectable options
+        COLOR_FOCUS = (255, 50, 50) if pulse else (200, 40, 40)
+        COLOR_LABEL = (255, 255, 100)
         
-        import time
-        pulse = (int(time.time() * 6) % 2) == 0  # Faster pulse
+        # Draw AI's focus rectangle
+        if focus and focus.get('rect'):
+            rx, ry, rw, rh = focus['rect']
+            # Convert game coordinates to screen coordinates
+            screen_x = display_x + int(rx * scale_x)
+            screen_y = display_y + int(ry * scale_y)
+            screen_w = int(rw * scale_x)
+            screen_h = int(rh * scale_y)
+            
+            # Draw thick pulsing border
+            pygame.draw.rect(self.screen, COLOR_FOCUS, 
+                            (screen_x - 2, screen_y - 2, screen_w + 4, screen_h + 4), 4)
+            
+            # Draw corner brackets for emphasis
+            bracket_len = min(screen_w, screen_h) // 3
+            # Top-left
+            pygame.draw.line(self.screen, COLOR_LABEL, (screen_x - 4, screen_y - 4), (screen_x - 4 + bracket_len, screen_y - 4), 2)
+            pygame.draw.line(self.screen, COLOR_LABEL, (screen_x - 4, screen_y - 4), (screen_x - 4, screen_y - 4 + bracket_len), 2)
+            # Top-right
+            pygame.draw.line(self.screen, COLOR_LABEL, (screen_x + screen_w + 4 - bracket_len, screen_y - 4), (screen_x + screen_w + 4, screen_y - 4), 2)
+            pygame.draw.line(self.screen, COLOR_LABEL, (screen_x + screen_w + 4, screen_y - 4), (screen_x + screen_w + 4, screen_y - 4 + bracket_len), 2)
+            # Bottom-left
+            pygame.draw.line(self.screen, COLOR_LABEL, (screen_x - 4, screen_y + screen_h + 4 - bracket_len), (screen_x - 4, screen_y + screen_h + 4), 2)
+            pygame.draw.line(self.screen, COLOR_LABEL, (screen_x - 4, screen_y + screen_h + 4), (screen_x - 4 + bracket_len, screen_y + screen_h + 4), 2)
+            # Bottom-right
+            pygame.draw.line(self.screen, COLOR_LABEL, (screen_x + screen_w + 4, screen_y + screen_h + 4 - bracket_len), (screen_x + screen_w + 4, screen_y + screen_h + 4), 2)
+            pygame.draw.line(self.screen, COLOR_LABEL, (screen_x + screen_w + 4 - bracket_len, screen_y + screen_h + 4), (screen_x + screen_w + 4, screen_y + screen_h + 4), 2)
         
-        # Determine what mode we're in and highlight accordingly
-        if mem_state.battle.in_battle:
-            # === BATTLE MODE ===
-            self._draw_battle_debug(display_x, display_y, scale_x, scale_y, mem_state, pulse)
+        # Draw AI focus label at top
+        if focus and focus.get('label'):
+            label = focus['label']
+            label_text = self.font_small.render(label, True, COLOR_LABEL)
+            # Draw with background for visibility
+            label_bg = pygame.Surface((label_text.get_width() + 8, label_text.get_height() + 4))
+            label_bg.fill((40, 20, 20))
+            label_bg.set_alpha(200)
+            self.screen.blit(label_bg, (display_x + 4, display_y + 4))
+            self.screen.blit(label_text, (display_x + 8, display_y + 6))
         
-        elif mem_state.menu.text_active or mem_state.menu.in_menu:
-            # === MENU/DIALOG MODE ===
-            self._draw_menu_debug(display_x, display_y, scale_x, scale_y, mem_state, pulse)
-        
-        else:
-            # === OVERWORLD MODE ===
-            self._draw_overworld_debug(display_x, display_y, scale_x, scale_y, mem_state, pulse)
-        
-        # Always show current state label
-        state_label = "BATTLE" if mem_state.battle.in_battle else \
-                     "MENU" if mem_state.menu.in_menu else \
-                     "DIALOG" if mem_state.menu.text_active else "EXPLORE"
-        color = (255, 100, 100) if pulse else (200, 80, 80)
-        state_text = self.font_small.render(f"[{state_label}]", True, color)
-        self.screen.blit(state_text, (display_x + 5, display_y + 5))
+        # Show action being performed
+        if focus and focus.get('action'):
+            action = focus['action']
+            target = focus.get('target', '')
+            if target:
+                action_str = f"{action}: {target}"
+            else:
+                action_str = action
+            action_text = self.font_small.render(action_str, True, (200, 200, 200))
+            self.screen.blit(action_text, (display_x + 4, display_y + 22))
     
     def _draw_menu_debug(self, dx, dy, sx, sy, mem_state, pulse):
         """Draw debug overlay for menu/dialog screens that follows the actual selection."""
