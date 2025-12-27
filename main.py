@@ -90,7 +90,7 @@ def main():
         from src.emulator import Emulator
         
         update_splash(0.65, "Loading renderer...")
-        from src.ppu_fast import PPU_Fast
+        from src.ppu_fast import PPUFast
         
         update_splash(0.75, "Loading GUI...")
         from src.gui import EmulatorGUI

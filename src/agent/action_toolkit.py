@@ -651,19 +651,19 @@ Which action? Reply with ONLY the action name."""
             
             # Goal completed!
             if check.is_complete:
-                self._log(f"✓ GOAL COMPLETE: {check.reason}")
+                self._log(f"[OK] GOAL COMPLETE: {check.reason}")
                 next_goal = self.goal_system.advance_goal()
                 if next_goal:
                     self._log(f"=== NEXT GOAL: {next_goal.name} ===")
                     self._log(f"  {next_goal.description}")
                 else:
-                    self._log("🎉 ALL GOALS COMPLETED!")
+                    self._log("*** ALL GOALS COMPLETED! ***")
             elif check.progress > goal.progress:
                 goal.progress = check.progress
                 self._log(f"Progress: {int(check.progress * 100)}% - {check.reason}")
         
         if situation != self.last_situation:
-            self._log(f"Situation changed: {self.last_situation} → {situation}")
+            self._log(f"Situation changed: {self.last_situation} -> {situation}")
             self.last_situation = situation
         
         # Log thinking about what action to take
@@ -685,7 +685,7 @@ Which action? Reply with ONLY the action name."""
         
         # Execute action through toolkit
         result = self.toolkit.execute_action(action_name)
-        self._log(f"→ {action_name}: {result.message}")
+        self._log(f">> {action_name}: {result.message}")
         
         # Update debug focus based on action and game state
         self._update_focus(action_name, state, situation)
