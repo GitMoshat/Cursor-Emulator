@@ -96,6 +96,11 @@ class EmulatorGUI:
         self.max_attempts = 3
         self.attempt_results: list = []  # Track success/failure per attempt
         
+        # Debug visualization
+        self.debug_scan_enabled = True  # Show AI scan rectangles (default ON)
+        self.scan_rects: list = []  # Rectangles to draw
+        self.scan_points: list = []  # Points of interest
+        
         if AGENT_AVAILABLE:
             self.agent_manager = AgentManager(emulator)
         
@@ -112,17 +117,17 @@ class EmulatorGUI:
     def _init_buttons(self):
         """Initialize UI button positions."""
         # Button dimensions
-        btn_w, btn_h = 70, 24
+        btn_w, btn_h = 60, 24
         btn_y = self.game_height + 15  # Below game display
         btn_x = 10
-        spacing = 5
+        spacing = 4
         
         # Create button rectangles
         self.buttons = {
             'turbo': pygame.Rect(btn_x, btn_y, btn_w, btn_h),
-            'ai': pygame.Rect(btn_x + btn_w + spacing, btn_y, btn_w, btn_h),
-            'ai_panel': pygame.Rect(btn_x + (btn_w + spacing) * 2, btn_y, btn_w + 10, btn_h),
-            'reset': pygame.Rect(btn_x + (btn_w + spacing) * 3 + 10, btn_y, btn_w - 10, btn_h),
+            'ai': pygame.Rect(btn_x + (btn_w + spacing), btn_y, btn_w, btn_h),
+            'debug': pygame.Rect(btn_x + (btn_w + spacing) * 2, btn_y, btn_w, btn_h),
+            'reset': pygame.Rect(btn_x + (btn_w + spacing) * 3, btn_y, btn_w, btn_h),
         }
         self.show_tilemap = True
         self.show_tiles = True
@@ -288,14 +293,16 @@ class EmulatorGUI:
                 if name == 'turbo':
                     self.turbo_mode = not self.turbo_mode
                     self.frame_skip = 2 if self.turbo_mode else 0
-                    mode_str = "TURBO ON ⚡" if self.turbo_mode else "Normal speed"
+                    mode_str = "TURBO ON" if self.turbo_mode else "Normal"
                     self.agent_thinking_log.append(f"[Speed] {mode_str}")
                 
                 elif name == 'ai':
                     self._toggle_agent()
                 
-                elif name == 'ai_panel':
-                    self.show_ai_panel = not self.show_ai_panel
+                elif name == 'debug':
+                    self.debug_scan_enabled = not self.debug_scan_enabled
+                    mode_str = "ON" if self.debug_scan_enabled else "OFF"
+                    self.agent_thinking_log.append(f"[Debug] Scan visualization {mode_str}")
                 
                 elif name == 'reset':
                     self._start_new_attempt()
@@ -424,19 +431,19 @@ class EmulatorGUI:
             # Determine button state/color
             if name == 'turbo':
                 active = self.turbo_mode
-                label = "⚡ TURBO" if active else "TURBO"
+                label = "TURBO" if active else "TURBO"
                 color = (80, 150, 80) if active else (60, 60, 70)
             elif name == 'ai':
                 active = self.agent_enabled
-                label = "🤖 AI ON" if active else "AI OFF"
+                label = "AI ON" if active else "AI OFF"
                 color = (80, 120, 180) if active else (60, 60, 70)
-            elif name == 'ai_panel':
-                active = self.show_ai_panel
-                label = "📊 PANEL" if active else "PANEL"
-                color = (100, 100, 120) if active else (60, 60, 70)
+            elif name == 'debug':
+                active = self.debug_scan_enabled
+                label = "DEBUG" if active else "DEBUG"
+                color = (180, 60, 60) if active else (60, 60, 70)
             elif name == 'reset':
                 active = False
-                label = "↺ RESET"
+                label = "RESET"
                 color = (120, 60, 60)
             else:
                 continue
@@ -467,6 +474,10 @@ class EmulatorGUI:
         scaled = pygame.transform.scale(self.game_surface, (self.game_width, self.game_height))
         self.screen.blit(scaled, (x, y))
         
+        # Draw debug scan overlay
+        if self.debug_scan_enabled and self.agent_enabled:
+            self._draw_debug_scan_overlay(x, y)
+        
         # Pause indicator
         if self.emulator.paused:
             pause_text = self.font_title.render("PAUSED", True, (255, 100, 100))
@@ -477,6 +488,115 @@ class EmulatorGUI:
         # FPS
         fps_text = self.font_small.render(f"FPS: {self.last_fps:.1f}", True, self.TEXT_COLOR)
         self.screen.blit(fps_text, (x, y + self.game_height + 5))
+    
+    def _draw_debug_scan_overlay(self, display_x: int, display_y: int):
+        """Draw debug rectangles showing what the AI is scanning."""
+        if not self.agent_manager or not self.agent_manager.agent:
+            return
+        
+        # Scale factor from game (160x144) to display
+        scale_x = self.game_width / 160
+        scale_y = self.game_height / 144
+        
+        # Get memory state for scanning info
+        mem_state = None
+        if hasattr(self.agent_manager.agent, 'get_memory_state'):
+            mem_state = self.agent_manager.agent.get_memory_state()
+        
+        if not mem_state:
+            return
+        
+        # Colors for different scan types
+        COLOR_PLAYER = (255, 50, 50)      # Red - player position
+        COLOR_SPRITE = (255, 150, 50)     # Orange - sprites/NPCs  
+        COLOR_INTERACT = (255, 255, 50)   # Yellow - interaction point
+        COLOR_SCAN_LINE = (255, 0, 0, 128) # Red semi-transparent scan lines
+        
+        # === PLAYER POSITION ===
+        # Draw rectangle around player (center of screen in most cases)
+        # Player is typically at screen center or offset by scroll
+        player_screen_x = 80  # Center X (player is usually centered)
+        player_screen_y = 72  # Center Y
+        
+        # Convert to display coordinates
+        px = display_x + int(player_screen_x * scale_x)
+        py = display_y + int(player_screen_y * scale_y)
+        pw = int(16 * scale_x)  # Player sprite is 16x16
+        ph = int(16 * scale_y)
+        
+        # Draw player box with pulsing effect
+        import time
+        pulse = abs(int(time.time() * 4) % 2)
+        player_color = COLOR_PLAYER if pulse else (200, 50, 50)
+        pygame.draw.rect(self.screen, player_color, (px - pw//2, py - ph//2, pw, ph), 2)
+        
+        # Draw facing direction indicator
+        facing = mem_state.player_position.facing
+        arrow_len = int(20 * scale_x)
+        cx, cy = px, py
+        if facing == "up":
+            pygame.draw.line(self.screen, COLOR_INTERACT, (cx, cy - ph//2), (cx, cy - ph//2 - arrow_len), 3)
+        elif facing == "down":
+            pygame.draw.line(self.screen, COLOR_INTERACT, (cx, cy + ph//2), (cx, cy + ph//2 + arrow_len), 3)
+        elif facing == "left":
+            pygame.draw.line(self.screen, COLOR_INTERACT, (cx - pw//2, cy), (cx - pw//2 - arrow_len, cy), 3)
+        elif facing == "right":
+            pygame.draw.line(self.screen, COLOR_INTERACT, (cx + pw//2, cy), (cx + pw//2 + arrow_len, cy), 3)
+        
+        # === SCAN LINES ===
+        # Draw horizontal and vertical scan lines through player
+        scan_alpha = 80
+        # Horizontal scan line
+        pygame.draw.line(self.screen, (255, 0, 0), 
+                        (display_x, py), (display_x + self.game_width, py), 1)
+        # Vertical scan line
+        pygame.draw.line(self.screen, (255, 0, 0),
+                        (px, display_y), (px, display_y + self.game_height), 1)
+        
+        # === SPRITES / NPCs ===
+        # Draw rectangles around visible sprites
+        if hasattr(mem_state, 'sprites'):
+            for sprite in mem_state.sprites[:10]:  # Limit to 10 sprites
+                if hasattr(sprite, 'visible') and sprite.visible:
+                    # Sprite position relative to screen
+                    sx = display_x + int(sprite.x * scale_x)
+                    sy = display_y + int(sprite.y * scale_y)
+                    sw = int(8 * scale_x)
+                    sh = int(8 * scale_y)
+                    pygame.draw.rect(self.screen, COLOR_SPRITE, (sx, sy, sw, sh), 1)
+        
+        # === INTERACTION ZONE ===
+        # Highlight the tile the player is facing (where A button would interact)
+        interact_x, interact_y = cx, cy
+        tile_size = int(16 * scale_x)
+        if facing == "up":
+            interact_y -= tile_size
+        elif facing == "down":
+            interact_y += tile_size
+        elif facing == "left":
+            interact_x -= tile_size
+        elif facing == "right":
+            interact_x += tile_size
+        
+        # Draw interaction zone with dashed border
+        pygame.draw.rect(self.screen, COLOR_INTERACT, 
+                        (interact_x - tile_size//2, interact_y - tile_size//2, tile_size, tile_size), 2)
+        
+        # === STATUS INDICATORS ===
+        # Battle indicator
+        if mem_state.battle.in_battle:
+            battle_text = self.font_small.render("⚔️ BATTLE", True, (255, 100, 100))
+            self.screen.blit(battle_text, (display_x + 5, display_y + 5))
+        
+        # Menu/dialog indicator
+        if mem_state.menu.text_active:
+            dialog_text = self.font_small.render("💬 DIALOG", True, (100, 255, 100))
+            self.screen.blit(dialog_text, (display_x + 5, display_y + 20))
+        
+        # Position readout
+        pos = mem_state.player_position
+        pos_text = self.font_small.render(f"({pos.x},{pos.y})", True, COLOR_PLAYER)
+        self.screen.blit(pos_text, (px - 15, py + ph//2 + 5))
     
     def _draw_debug_panel(self):
         """Draw the debug information panel."""
