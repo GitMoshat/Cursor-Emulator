@@ -49,9 +49,10 @@ class EmulatorGUI:
         self.tiles_width = 128
         self.tiles_height = 192
         
-        # Total window size (extra height for AI thinking panel)
-        self.window_width = self.game_width + self.debug_panel_width + 30
-        self.window_height = max(self.game_height + 280, 750)
+        # Total window size - wider for AI panel on right
+        self.ai_panel_width = 350  # AI thinking panel width
+        self.window_width = self.game_width + self.ai_panel_width + 40
+        self.window_height = max(self.game_height + 100, 650)
         
         # Initialize Pygame
         pygame.init()
@@ -85,16 +86,25 @@ class EmulatorGUI:
         # AI Agent system
         self.agent_manager = None
         self.agent_enabled = False
-        self.agent_status_text = "AI: Ready (F2 to start)"
-        self.agent_thinking_log: list = ["[Ready] Press F2 to start AI agent"]
-        self.max_thinking_display = 8  # Lines to show in panel
+        self.agent_status_text = "AI: Starting..."
+        self.agent_thinking_log: list = ["[Init] AI Agent initializing..."]
+        self.max_thinking_display = 12  # Lines to show in panel
         self.show_ai_panel = True  # Always show AI panel by default
+        
+        # Attempt tracking
+        self.current_attempt = 1
+        self.max_attempts = 3
+        self.attempt_results: list = []  # Track success/failure per attempt
+        
         if AGENT_AVAILABLE:
             self.agent_manager = AgentManager(emulator)
         
         # UI Buttons
         self.buttons: dict = {}
         self._init_buttons()
+        
+        # Auto-start AI agent
+        self._auto_start_ai = True
         
         # State
         self.running = True
@@ -140,6 +150,11 @@ class EmulatorGUI:
         """Main GUI loop."""
         self.running = True
         
+        # Auto-start AI on first frame
+        if self._auto_start_ai and self.agent_manager:
+            self._toggle_agent()
+            self.agent_thinking_log.append(f"[Attempt {self.current_attempt}/{self.max_attempts}] Starting...")
+        
         while self.running:
             self._handle_events()
             
@@ -172,6 +187,13 @@ class EmulatorGUI:
                                 self.agent_thinking_log = self.agent_manager.agent.get_thinking_output()
                             elif hasattr(self.agent_manager.agent, 'thinking_history'):
                                 self.agent_thinking_log = self.agent_manager.agent.thinking_history
+                            
+                            # Check for goal completion (find_professor is target)
+                            if hasattr(self.agent_manager.agent, 'goal_system'):
+                                goal = self.agent_manager.agent.goal_system.get_current_goal()
+                                if goal and goal.id == "get_starter":
+                                    # Reached final goal - attempt successful!
+                                    self._handle_attempt_complete(True)
                 
                 # Only update display on last frame
                 self._update_game_surface(frame)
@@ -276,10 +298,40 @@ class EmulatorGUI:
                     self.show_ai_panel = not self.show_ai_panel
                 
                 elif name == 'reset':
-                    self.emulator.reset()
-                    self.agent_thinking_log.append("[Reset] Game reset")
+                    self._start_new_attempt()
                 
                 break
+    
+    def _handle_attempt_complete(self, success: bool):
+        """Handle completion of an attempt."""
+        self.attempt_results.append(success)
+        
+        if success:
+            self.agent_thinking_log.append(f"🎉 ATTEMPT {self.current_attempt} SUCCESSFUL!")
+        else:
+            self.agent_thinking_log.append(f"❌ Attempt {self.current_attempt} failed")
+        
+        # Check if more attempts remain
+        if self.current_attempt < self.max_attempts:
+            self.current_attempt += 1
+            self._start_new_attempt()
+        else:
+            # All attempts done
+            successes = sum(self.attempt_results)
+            self.agent_thinking_log.append(f"=== RESULTS: {successes}/{self.max_attempts} successful ===")
+            self.agent_enabled = False
+    
+    def _start_new_attempt(self):
+        """Start a new attempt - reset game and agent."""
+        self.emulator.reset()
+        
+        # Reset agent goals
+        if self.agent_manager and self.agent_manager.agent:
+            if hasattr(self.agent_manager.agent, 'goal_system'):
+                self.agent_manager.agent.goal_system.reset()
+            self.agent_manager.reset()
+        
+        self.agent_thinking_log.append(f"[Attempt {self.current_attempt}/{self.max_attempts}] Starting fresh...")
     
     def _handle_events(self):
         """Handle input events."""
@@ -351,21 +403,17 @@ class EmulatorGUI:
         """Draw all GUI elements."""
         self.screen.fill(self.BG_COLOR)
         
-        # Draw game display
+        # Draw game display (left side)
         self._draw_game_display()
         
-        # Draw UI buttons
+        # Draw UI buttons (below game)
         self._draw_buttons()
         
-        # Draw debug panel
-        if self.show_debug:
-            self._draw_debug_panel()
-        
-        # Draw AI thinking panel (below game display)
+        # Draw AI panel on the RIGHT side (goal + thinking)
         if self.show_ai_panel:
-            self._draw_thinking_panel()
+            self._draw_ai_panel_right()
         
-        # Draw help
+        # Draw help at bottom
         self._draw_help()
         
         pygame.display.flip()
@@ -575,109 +623,124 @@ class EmulatorGUI:
         # Draw tiles
         self.screen.blit(self.tiles_surface, (x, y))
     
-    def _draw_thinking_panel(self):
-        """Draw the AI thinking/reasoning panel with memory state."""
-        # Position below game display (after buttons)
-        x = 10
-        y = self.game_height + 45  # Below buttons
-        panel_width = self.game_width + 200  # Wider for memory info
-        panel_height = 165
+    def _draw_ai_panel_right(self):
+        """Draw AI goal and thinking panel on the right side."""
+        # Position on right side of screen
+        x = self.game_width + 20
+        y = 10
+        panel_width = self.ai_panel_width - 10
+        panel_height = self.game_height + 60
         
-        # Background
-        pygame.draw.rect(self.screen, self.PANEL_BG, 
+        # Panel background
+        pygame.draw.rect(self.screen, (30, 32, 38), 
                         (x - 5, y - 5, panel_width + 10, panel_height + 10))
         pygame.draw.rect(self.screen, self.BORDER_COLOR,
                         (x - 5, y - 5, panel_width + 10, panel_height + 10), 1)
         
-        # Title with stage info
-        stage_info = ""
-        memory_info = ""
+        # === ATTEMPT COUNTER ===
+        attempt_color = (100, 200, 100) if self.agent_enabled else (150, 150, 150)
+        attempt_text = self.font_title.render(
+            f"Attempt {self.current_attempt}/{self.max_attempts}", True, attempt_color
+        )
+        self.screen.blit(attempt_text, (x, y))
+        y += 25
+        
+        # === CURRENT GOAL (prominent) ===
+        goal_name = "No Goal"
+        goal_desc = ""
+        goal_progress = ""
+        
         if self.agent_manager and self.agent_manager.agent:
             if hasattr(self.agent_manager.agent, 'get_current_stage_info'):
                 info = self.agent_manager.agent.get_current_stage_info()
-                stage_info = f" - {info.get('name', '?')}"
-            
-            # Get memory state if available
+                goal_name = info.get('name', 'Unknown')
+                goal_desc = info.get('goal', '')
+                goal_progress = info.get('progress', '')
+        
+        # Goal box
+        goal_box_h = 70
+        pygame.draw.rect(self.screen, (40, 60, 50), (x, y, panel_width, goal_box_h))
+        pygame.draw.rect(self.screen, (80, 150, 80), (x, y, panel_width, goal_box_h), 2)
+        
+        # Goal title
+        goal_title = self.font_title.render(f"🎯 {goal_name}", True, (120, 220, 120))
+        self.screen.blit(goal_title, (x + 5, y + 5))
+        
+        # Goal description
+        desc_lines = [goal_desc[i:i+45] for i in range(0, len(goal_desc), 45)][:2]
+        for i, line in enumerate(desc_lines):
+            desc_text = self.font_small.render(line, True, (180, 200, 180))
+            self.screen.blit(desc_text, (x + 5, y + 28 + i * 14))
+        
+        # Progress
+        if goal_progress:
+            prog_text = self.font_small.render(goal_progress, True, (150, 150, 100))
+            self.screen.blit(prog_text, (x + panel_width - 80, y + 5))
+        
+        y += goal_box_h + 10
+        
+        # === GAME STATE ===
+        if self.agent_manager and self.agent_manager.agent:
             if hasattr(self.agent_manager.agent, 'get_memory_state'):
                 mem_state = self.agent_manager.agent.get_memory_state()
                 if mem_state:
                     pos = mem_state.player_position
-                    memory_info = f" | Pos:({pos.x},{pos.y}) Map:{pos.map_name[:15]}"
-                    if mem_state.battle.in_battle:
-                        memory_info += " [BATTLE]"
-        
-        title_color = (100, 200, 100) if self.agent_enabled else self.HIGHLIGHT_COLOR
-        title = self.font_title.render(f"🤖 AI{stage_info}{memory_info}", True, title_color)
-        self.screen.blit(title, (x, y))
-        y += 20
-        
-        # Draw memory state summary if available
-        if self.agent_manager and self.agent_manager.agent and hasattr(self.agent_manager.agent, 'get_memory_state'):
-            mem_state = self.agent_manager.agent.get_memory_state()
-            if mem_state:
-                # Party info
-                if mem_state.party:
-                    party_str = " | ".join(
-                        f"{p.species_name[:8]}:{p.current_hp}/{p.max_hp}"
-                        for p in mem_state.party[:3]
+                    state_text = self.font_small.render(
+                        f"📍 ({pos.x},{pos.y}) {pos.map_name[:20]}", True, (150, 180, 200)
                     )
-                    party_text = self.font_small.render(f"Party: {party_str}", True, (150, 200, 150))
-                    self.screen.blit(party_text, (x, y))
-                    y += 14
-                
-                # Status line
-                status_parts = []
-                if mem_state.badges > 0:
-                    status_parts.append(f"Badges:{mem_state.badges}")
-                if mem_state.money > 0:
-                    status_parts.append(f"${mem_state.money}")
-                if not mem_state.has_starter:
-                    status_parts.append("NO STARTER")
-                if mem_state.battle.in_battle:
-                    b = mem_state.battle
-                    status_parts.append(f"vs {b.enemy_name} Lv{b.enemy_level}")
-                
-                if status_parts:
-                    status_text = self.font_small.render(" | ".join(status_parts), True, (200, 200, 150))
-                    self.screen.blit(status_text, (x, y))
-                    y += 14
-        
-        # Draw goal if available
-        if self.agent_manager and self.agent_manager.agent:
-            if hasattr(self.agent_manager.agent, 'get_current_stage_info'):
-                info = self.agent_manager.agent.get_current_stage_info()
-                goal = info.get('goal', '')[:70]
-                goal_text = self.font_small.render(f"Goal: {goal}", True, (180, 180, 100))
-                self.screen.blit(goal_text, (x, y))
-                y += 14
+                    self.screen.blit(state_text, (x, y))
+                    y += 16
+                    
+                    # Party/battle status
+                    if mem_state.battle.in_battle:
+                        b = mem_state.battle
+                        battle_text = self.font_small.render(
+                            f"⚔️ BATTLE vs {b.enemy_name} Lv{b.enemy_level}", True, (250, 150, 150)
+                        )
+                        self.screen.blit(battle_text, (x, y))
+                    elif mem_state.party_count > 0:
+                        party_str = ", ".join(f"{p.species_name[:6]}" for p in mem_state.party[:3])
+                        party_text = self.font_small.render(f"Party: {party_str}", True, (150, 200, 150))
+                        self.screen.blit(party_text, (x, y))
+                    else:
+                        no_party = self.font_small.render("No Pokemon yet", True, (150, 150, 150))
+                        self.screen.blit(no_party, (x, y))
+                    y += 18
         
         # Divider
-        y += 2
+        pygame.draw.line(self.screen, (60, 60, 70), (x, y), (x + panel_width, y), 1)
+        y += 8
+        
+        # === THINKING LOG ===
+        thinking_title = self.font_small.render("💭 AI Thinking:", True, self.HIGHLIGHT_COLOR)
+        self.screen.blit(thinking_title, (x, y))
+        y += 18
         
         # Draw thinking log
         if self.agent_thinking_log:
             recent = self.agent_thinking_log[-self.max_thinking_display:]
             for line in recent:
                 # Truncate long lines
-                display_line = line[-80:] if len(line) > 80 else line
+                max_chars = 42
+                display_line = line[-max_chars:] if len(line) > max_chars else line
                 
-                # Color code based on content
-                if '✓' in line or 'success' in line.lower():
-                    color = (100, 200, 100)
+                # Color code
+                if '✓' in line or 'COMPLETE' in line:
+                    color = (100, 220, 100)
                 elif '✗' in line or 'fail' in line.lower() or 'error' in line.lower():
-                    color = (200, 100, 100)
-                elif 'Goal:' in line or 'Stage:' in line or 'Rule:' in line:
-                    color = (200, 200, 100)
-                elif 'LLM' in line:
-                    color = (150, 150, 250)
+                    color = (220, 100, 100)
+                elif 'GOAL' in line or '===' in line:
+                    color = (220, 200, 100)
+                elif 'Attempt' in line:
+                    color = (150, 200, 250)
                 else:
-                    color = self.TEXT_COLOR
+                    color = (170, 170, 180)
                 
                 text = self.font_small.render(display_line, True, color)
                 self.screen.blit(text, (x, y))
-                y += 13
+                y += 14
         else:
-            no_log = self.font_small.render("Press F2 to start AI agent (memory-based, no vision needed)", True, (120, 120, 120))
+            no_log = self.font_small.render("Waiting for AI...", True, (100, 100, 100))
             self.screen.blit(no_log, (x, y))
     
     def _draw_help(self):
