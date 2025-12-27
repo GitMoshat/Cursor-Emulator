@@ -700,103 +700,95 @@ Which action? Reply with ONLY the action name."""
         )
     
     def _update_focus(self, action_name: str, state, situation: str):
-        """Update debug focus to show what the AI is interacting with."""
-        cursor = state.menu.cursor_position
+        """Update debug focus using actual memory-based positions."""
+        menu = state.menu
+        cursor = menu.cursor_position
         
-        if action_name == "advance_dialog" or situation == "dialog":
-            # Focus on dialog box at bottom of screen
+        # Get pixel rectangle from memory manager's calculations
+        sel_x = menu.selection_pixel_x
+        sel_y = menu.selection_pixel_y
+        sel_w = menu.selection_pixel_w
+        sel_h = menu.selection_pixel_h
+        
+        # Log what we're seeing from memory
+        self._log(f"[FOCUS] cursor={cursor} xy=({menu.cursor_x},{menu.cursor_y}) win=({menu.window_left},{menu.window_top})-({menu.window_right},{menu.window_bottom})")
+        self._log(f"[FOCUS] selection rect: ({sel_x},{sel_y}) {sel_w}x{sel_h}")
+        
+        if menu.text_active and action_name == "advance_dialog":
+            # Dialog box - use calculated position
             self.current_focus = {
                 'type': 'dialog',
                 'action': 'Press A',
-                'target': 'Dialog Box',
-                'rect': (4, 96, 152, 46),  # Dialog box area
-                'label': f'AI: Advancing dialog',
+                'target': 'Dialog',
+                'rect': (sel_x, sel_y, sel_w, sel_h),
+                'label': f'AI: Reading dialog',
             }
         
-        elif action_name == "select_option" and situation == "menu":
-            screen = state.menu.screen_type
+        elif menu.in_menu or situation == "menu":
+            # Menu selection - use memory-calculated position
+            screen = menu.screen_type
+            
+            # Determine option name
             if screen == "gender_select":
-                # BOY at Y~56, GIRL at Y~72
-                opt_y = 56 + cursor * 16
                 opt_name = "BOY" if cursor == 0 else "GIRL"
-                self.current_focus = {
-                    'type': 'menu_option',
-                    'action': 'Select',
-                    'target': opt_name,
-                    'rect': (88, opt_y, 48, 14),
-                    'label': f'AI: Selecting {opt_name}',
-                }
+            elif screen == "option_menu" or menu.options_count == 2:
+                opt_name = "YES" if cursor == 0 else "NO"
             else:
-                # Generic option
-                opt_y = 72 + cursor * 16
-                self.current_focus = {
-                    'type': 'menu_option',
-                    'action': 'Select',
-                    'target': f'Option {cursor}',
-                    'rect': (88, opt_y, 56, 14),
-                    'label': f'AI: Selecting option {cursor}',
-                }
+                opt_name = f"Option {cursor}"
+            
+            self.current_focus = {
+                'type': 'menu_option',
+                'action': 'Select',
+                'target': opt_name,
+                'rect': (sel_x, sel_y, sel_w, sel_h),
+                'label': f'AI: {opt_name}',
+            }
         
         elif action_name == "start_game" or situation == "title":
             self.current_focus = {
                 'type': 'button',
                 'action': 'Press START',
-                'target': 'Title Screen',
-                'rect': (40, 100, 80, 20),  # Approximate "Press Start" area
-                'label': 'AI: Starting game',
+                'target': 'Start',
+                'rect': (40, 110, 80, 20),
+                'label': 'AI: Start game',
             }
         
         elif action_name in ["move_up", "move_down", "move_left", "move_right", "explore"]:
-            # Player movement - focus on player
-            direction = action_name.replace("move_", "").upper() if "move_" in action_name else "EXPLORING"
+            direction = action_name.replace("move_", "").upper() if "move_" in action_name else "EXPLORE"
             self.current_focus = {
                 'type': 'player',
-                'action': f'Move {direction}',
-                'target': 'Player',
-                'rect': (72, 64, 16, 16),  # Player center position
-                'label': f'AI: Moving {direction}',
+                'action': f'Move',
+                'target': direction,
+                'rect': (72, 64, 16, 16),
+                'label': f'AI: {direction}',
             }
         
         elif action_name == "interact":
-            # Interacting with something in front of player
             facing = state.player_position.facing
-            px, py = 80, 72  # Player center
-            if facing == "up":
-                target_rect = (72, 48, 16, 16)
-            elif facing == "down":
-                target_rect = (72, 80, 16, 16)
-            elif facing == "left":
-                target_rect = (56, 64, 16, 16)
-            else:  # right
-                target_rect = (88, 64, 16, 16)
-            
+            offsets = {"up": (0, -16), "down": (0, 16), "left": (-16, 0), "right": (16, 0)}
+            dx, dy = offsets.get(facing, (0, 0))
             self.current_focus = {
                 'type': 'interact',
                 'action': 'Press A',
-                'target': f'Object ({facing})',
-                'rect': target_rect,
-                'label': f'AI: Interacting {facing}',
+                'target': facing.upper(),
+                'rect': (72 + dx, 64 + dy, 16, 16),
+                'label': f'AI: Interact {facing}',
             }
         
         elif situation == "battle":
-            # Battle menu focus
+            # Use calculated battle menu position
             menu_opts = ["FIGHT", "PKMN", "ITEM", "RUN"]
             menu_state = state.battle.menu_state
             opt_name = menu_opts[menu_state] if menu_state < 4 else "?"
-            col = menu_state % 2
-            row = menu_state // 2
-            opt_x = 80 + col * 40
-            opt_y = 112 + row * 16
             self.current_focus = {
                 'type': 'battle_menu',
                 'action': 'Select',
                 'target': opt_name,
-                'rect': (opt_x, opt_y, 36, 14),
+                'rect': (sel_x, sel_y, sel_w, sel_h),
                 'label': f'AI: {opt_name}',
             }
         
         else:
-            # Default - no specific focus
             self.current_focus = {
                 'type': 'none',
                 'action': action_name,

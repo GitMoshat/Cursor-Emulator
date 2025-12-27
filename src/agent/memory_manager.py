@@ -68,12 +68,22 @@ class MenuState:
     in_menu: bool = False
     menu_type: str = ""  # "main", "pokemon", "items", "save", "dialog", etc.
     cursor_position: int = 0
-    cursor_x: int = 0  # X position in grid menus
-    cursor_y: int = 0  # Y position in grid menus
+    cursor_x: int = 0  # X position (tiles)
+    cursor_y: int = 0  # Y position (tiles)
     text_active: bool = False
     options_count: int = 0
     screen_type: str = ""  # "title", "name_entry", "gender_select", "overworld", "battle", etc.
     selection_y_pixel: int = 0  # Approximate Y pixel of current selection
+    # Window bounds in tiles (8x8 pixels per tile)
+    window_top: int = 0
+    window_bottom: int = 18  # Default to bottom of screen
+    window_left: int = 0
+    window_right: int = 20  # Default to right of screen
+    # Calculated pixel positions for current selection
+    selection_pixel_x: int = 0
+    selection_pixel_y: int = 0
+    selection_pixel_w: int = 0
+    selection_pixel_h: int = 0
 
 
 @dataclass
@@ -292,17 +302,26 @@ POKEMON_GSC_ADDRESSES = {
     'battle_turn': 0xD264,     # Turn counter
     'player_mon_hp': 0xD218,   # wBattleMonHP - 2 bytes
     
-    # Menu/UI
+    # Menu/UI - Window and cursor tracking
     'menu_open': 0xCF63,       # wMenuCursorY
-    'cursor_pos': 0xCF64,      # wMenuCursorX / wMenuCursorPosition
-    'cursor_y': 0xCF63,        # wMenuCursorY - Y position (row)
-    'cursor_x': 0xCF64,        # wMenuCursorX - X position (column)
+    'cursor_pos': 0xCF64,      # wMenuCursorX / wMenuCursorPosition  
+    'cursor_y': 0xCF63,        # wMenuCursorY - Y position (row) in tiles
+    'cursor_x': 0xCF64,        # wMenuCursorX - X position (column) in tiles
     'text_delay': 0xCFC9,      # wTextDelayFrames
     'joy_pressed': 0xCFA5,     # wJoyPressed - button state
-    'window_data': 0xCF81,     # wWindowStackPointer - menu window tracking
+    'window_data': 0xCF81,     # wWindowStackPointer
     'wram_state': 0xD0D7,      # wScriptMode / game state
     'intro_scene': 0xD002,     # Intro/new game scene tracking
-    'script_running': 0xD438,  # wScriptRunning - is a script/cutscene active
+    'script_running': 0xD438,  # wScriptRunning
+    # Menu window positions (Crystal/GSC)
+    'menu_data_start': 0xCF71, # wMenuData - start of menu structure
+    'menu_border_top': 0xCF83, # Menu top Y (tiles)
+    'menu_border_bottom': 0xCF84, # Menu bottom Y (tiles)
+    'menu_border_left': 0xCF85,  # Menu left X (tiles)
+    'menu_border_right': 0xCF86, # Menu right X (tiles)
+    'textbox_y': 0xCF87,       # Text box Y position
+    'textbox_x': 0xCF88,       # Text box X position
+    'num_menu_items': 0xCF92,  # wMenuData_ItemsPointer - number of options
     
     # Flags
     'has_pokedex': 0xD84C,     # wPokedexCaught flags start
@@ -706,7 +725,7 @@ class MemoryManager:
                 if 'cursor_pos' in self.addresses:
                     state.menu.cursor_position = self.read_byte(self.addresses['cursor_pos'])
                 
-                # Get X and Y cursor positions separately
+                # Get X and Y cursor positions separately (in tiles)
                 if 'cursor_y' in self.addresses:
                     state.menu.cursor_y = self.read_byte(self.addresses['cursor_y'])
                 if 'cursor_x' in self.addresses:
@@ -715,12 +734,26 @@ class MemoryManager:
                 if 'text_progress' in self.addresses:
                     text_val = self.read_byte(self.addresses['text_progress'])
                     state.menu.text_active = text_val != 0
+                
+                # Read menu window bounds (in tiles)
+                if 'menu_border_top' in self.addresses:
+                    state.menu.window_top = self.read_byte(self.addresses['menu_border_top'])
+                if 'menu_border_bottom' in self.addresses:
+                    state.menu.window_bottom = self.read_byte(self.addresses['menu_border_bottom'])
+                if 'menu_border_left' in self.addresses:
+                    state.menu.window_left = self.read_byte(self.addresses['menu_border_left'])
+                if 'menu_border_right' in self.addresses:
+                    state.menu.window_right = self.read_byte(self.addresses['menu_border_right'])
+                
+                # Number of menu options
+                if 'num_menu_items' in self.addresses:
+                    state.menu.options_count = self.read_byte(self.addresses['num_menu_items'])
             
             # Detect screen type based on game state
             state.menu.screen_type = self._detect_screen_type(state)
             
-            # Calculate approximate Y pixel position of selection
-            state.menu.selection_y_pixel = self._calculate_selection_pixel(state)
+            # Calculate pixel positions for current selection
+            self._calculate_selection_pixels(state)
             
             # Game progress flags
             if 'has_pokedex' in self.addresses:
@@ -789,46 +822,98 @@ class MemoryManager:
         # Overworld
         return "overworld"
     
-    def _calculate_selection_pixel(self, state: GameState) -> int:
-        """Calculate approximate Y pixel position of current menu selection."""
-        screen_type = state.menu.screen_type
-        cursor_y = state.menu.cursor_y
-        cursor_pos = state.menu.cursor_position
+    def _calculate_selection_pixels(self, state: GameState):
+        """Calculate pixel rectangle for current selection based on memory values."""
+        # Each tile is 8x8 pixels
+        # Screen is 160x144 pixels (20x18 tiles)
+        TILE_SIZE = 8
         
-        # Screen is 144 pixels tall, 160 wide
-        # Tiles are 8x8 pixels
+        menu = state.menu
+        cursor_y = menu.cursor_y  # Y position in tiles
+        cursor_x = menu.cursor_x  # X position in tiles
+        cursor_pos = menu.cursor_position
         
-        if screen_type == "gender_select":
-            # Gender select typically has options at fixed positions
-            # Approximately: BOY around Y=72, GIRL around Y=88
-            base_y = 56  # Where first option starts
-            spacing = 16  # Pixels between options
-            return base_y + (cursor_pos * spacing)
+        # Get window bounds (in tiles) - use memory values or defaults
+        win_top = menu.window_top if menu.window_top > 0 else 0
+        win_bottom = menu.window_bottom if menu.window_bottom > 0 else 18
+        win_left = menu.window_left if menu.window_left > 0 else 0
+        win_right = menu.window_right if menu.window_right > 0 else 20
         
-        elif screen_type == "option_menu":
-            # Yes/No type menus
-            base_y = 72
-            spacing = 16
-            return base_y + (cursor_pos * spacing)
+        # Default selection rectangle
+        sel_x = 0
+        sel_y = 0
+        sel_w = 64  # Default width
+        sel_h = 16  # Default height (2 tiles)
         
-        elif screen_type == "name_entry":
-            # Name entry grid - calculate from grid position
-            grid_y = cursor_pos // 10  # Assuming 10-column grid
-            base_y = 48  # Where grid starts
-            tile_height = 16
-            return base_y + (grid_y * tile_height)
+        screen_type = menu.screen_type
         
-        elif screen_type == "menu":
-            # Standard menu
-            base_y = 24  # Menu starts near top
-            spacing = 16
-            return base_y + (cursor_y * spacing)
+        if menu.text_active and not menu.in_menu:
+            # Dialog text box - always at bottom of screen
+            sel_x = 4
+            sel_y = 96  # Bottom 48 pixels
+            sel_w = 152
+            sel_h = 46
         
-        elif screen_type == "battle":
-            # Battle menu at bottom of screen
-            base_y = 96
-            row = state.battle.menu_state // 2
-            return base_y + (row * 24)
+        elif menu.in_menu:
+            # Use cursor position to calculate selection location
+            # cursor_y is the row within the menu (0-indexed)
+            # cursor_x is usually 0 for simple menus
+            
+            # Calculate based on window bounds from memory
+            if win_top > 0 or win_left > 0:
+                # Use actual window position from memory
+                # Selection is at: window_left + cursor_x, window_top + 1 + cursor_y * 2
+                sel_x = (win_left + 1) * TILE_SIZE  # +1 for border
+                sel_y = (win_top + 1 + cursor_y * 2) * TILE_SIZE  # +1 for border, *2 for row spacing
+                sel_w = (win_right - win_left - 1) * TILE_SIZE  # -1 for borders
+                sel_h = 14  # Slightly less than 2 tiles
+            else:
+                # Fallback: use cursor_y directly as tile position
+                # Many menus have cursor_y as the tile row directly
+                if cursor_y > 0:
+                    sel_y = cursor_y * TILE_SIZE
+                    sel_x = (cursor_x * TILE_SIZE) if cursor_x > 0 else 8
+                    sel_w = 80
+                    sel_h = 14
+                else:
+                    # Use cursor_position as option index
+                    # Estimate position based on screen type
+                    if screen_type == "gender_select":
+                        # YES/NO or BOY/GIRL style - upper right area
+                        sel_x = 104  # Right side
+                        sel_y = 32 + cursor_pos * 16
+                        sel_w = 48
+                        sel_h = 14
+                    elif screen_type == "option_menu":
+                        # YES/NO menu - check where it appears
+                        # Usually in a small window
+                        sel_x = 104
+                        sel_y = 40 + cursor_pos * 16
+                        sel_w = 48
+                        sel_h = 14
+                    else:
+                        # Generic menu option
+                        sel_x = 16
+                        sel_y = 24 + cursor_pos * 16
+                        sel_w = 100
+                        sel_h = 14
+        
+        elif state.battle.in_battle:
+            # Battle menu - 2x2 grid at bottom right
+            menu_state = state.battle.menu_state
+            col = menu_state % 2
+            row = menu_state // 2
+            sel_x = 80 + col * 40
+            sel_y = 112 + row * 16
+            sel_w = 36
+            sel_h = 14
+        
+        # Store calculated values
+        menu.selection_pixel_x = sel_x
+        menu.selection_pixel_y = sel_y
+        menu.selection_pixel_w = sel_w
+        menu.selection_pixel_h = sel_h
+        menu.selection_y_pixel = sel_y  # Keep for compatibility
         
         # Default - use cursor_y
         return 40 + (cursor_y * 16)
