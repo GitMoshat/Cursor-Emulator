@@ -1,6 +1,7 @@
 """
 Build script for GBC Emulator
 Compiles the project into a standalone executable using PyInstaller.
+Optimized for smaller size and faster startup.
 """
 
 import subprocess
@@ -24,26 +25,59 @@ def main():
     for folder in ['build', 'dist']:
         if os.path.exists(folder):
             print(f"Cleaning {folder}/...")
-            shutil.rmtree(folder)
+            try:
+                shutil.rmtree(folder)
+            except PermissionError:
+                print(f"Warning: Could not clean {folder}/ - file may be in use")
     
-    # PyInstaller command
+    # Remove old spec file
+    if os.path.exists("GBCEmulator.spec"):
+        os.remove("GBCEmulator.spec")
+    
+    # Exclusions to reduce size - these are not needed at runtime
+    excludes = [
+        'matplotlib', 'scipy', 'pandas', 'PIL', 'tkinter',
+        'test', 'tests', 'unittest', 'doctest',
+        'pydoc', 'pdb', 'profile', 'cProfile',
+        'xml', 'xmlrpc', 'html', 'http.server',
+        'ftplib', 'smtplib', 'imaplib', 'poplib',
+        'telnetlib', 'uu', 'bz2', 'lzma',
+        'curses', 'lib2to3', 'idlelib',
+        'distutils', 'setuptools', 'pkg_resources',
+        'IPython', 'jupyter', 'notebook',
+        'numba.cuda',  # Don't need CUDA support
+        'llvmlite.tests',
+    ]
+    
+    exclude_args = []
+    for ex in excludes:
+        exclude_args.extend(['--exclude-module', ex])
+    
+    # PyInstaller command - optimized for size
     cmd = [
         sys.executable, "-m", "PyInstaller",
         "--name=GBCEmulator",
         "--onefile",
         "--windowed",  # No console window
-        "--add-data", f"src;src",  # Include src folder
+        "--add-data", f"src;src",
+        # Core dependencies
         "--hidden-import=numpy",
-        "--hidden-import=pygame",
+        "--hidden-import=pygame", 
         "--hidden-import=numba",
         "--hidden-import=requests",
-        "--collect-all", "pygame",
-        "--collect-all", "numba",
+        "--hidden-import=json",
+        # Collect only what's needed
+        "--collect-submodules", "pygame",
+        "--collect-submodules", "numba.core",
+        "--collect-submodules", "llvmlite",
+        # Optimizations
+        "--strip",  # Strip symbols (Linux/Mac)
+        "--noupx",  # UPX can cause issues, skip it
+        *exclude_args,
         "main.py"
     ]
     
-    print("\nRunning PyInstaller...")
-    print(f"Command: {' '.join(cmd)}")
+    print("\nRunning PyInstaller (optimized build)...")
     print()
     
     result = subprocess.run(cmd)
@@ -69,4 +103,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
