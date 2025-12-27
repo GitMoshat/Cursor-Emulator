@@ -449,6 +449,7 @@ class ToolkitAgent:
         self.ollama_host = self.config.ollama_host
         self.ollama_model = "llama3.2"
         self.llm_connected = False
+        self.fast_mode = True  # Disable LLM for max FPS, use heuristics only
         
         # State
         self.thinking_history: List[str] = []
@@ -883,17 +884,9 @@ Which action? Reply with ONLY the action name."""
         if not self.memory_manager or not self.toolkit:
             return AgentAction(buttons_to_press=[Button.A], reasoning="No toolkit")
         
-        # During hold frames, only update focus every 4 frames to save performance
+        # During hold frames - just return the held action, no processing
         if self.hold_remaining > 0:
             self.hold_remaining -= 1
-            
-            # Update focus less frequently during holds (every 4 frames)
-            if self.hold_remaining % 4 == 0:
-                state = self.memory_manager.get_state()
-                situation = self._analyze_situation(state)
-                current_action = self.current_result.message.split(':')[0] if self.current_result and ':' in self.current_result.message else "advance_dialog"
-                self._update_focus(current_action, state, situation)
-            
             if self.current_result:
                 return AgentAction(
                     buttons_to_press=self.current_result.buttons,
@@ -902,16 +895,13 @@ Which action? Reply with ONLY the action name."""
                 )
             return AgentAction()
         
-        # Full state read for new decisions
+        # Only read state when making NEW decisions (not during holds)
         self.perf_stats['state_reads'] += 1
         state = self.memory_manager.get_state()
         situation = self._analyze_situation(state)
         
-        # Update focus with new state
-        if self.current_result:
-            current_action = self.current_result.message.split(':')[0] if ':' in self.current_result.message else "advance_dialog"
-        else:
-            current_action = "advance_dialog"
+        # Update focus for debug overlay
+        current_action = self.current_result.message.split(':')[0] if self.current_result and ':' in self.current_result.message else "waiting"
         self._update_focus(current_action, state, situation)
         
         # Log detailed perception of the state
@@ -951,8 +941,10 @@ Which action? Reply with ONLY the action name."""
         # Get action - use goal hints + situation
         action_name = None
         
-        # Try LLM with goal context
-        if self.llm_connected:
+        # Try LLM with goal context (disable for max FPS)
+        # LLM is async but still has overhead - skip in fast mode
+        use_llm = self.llm_connected and not getattr(self, 'fast_mode', False)
+        if use_llm:
             action_name = self._get_llm_action_with_goal(state, situation, goal)
             if action_name:
                 self._log(f"LLM chose: {action_name}")

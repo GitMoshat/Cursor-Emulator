@@ -605,21 +605,28 @@ class MemoryManager:
         return ''.join(chars)
     
     def get_state(self, force_refresh: bool = False) -> GameState:
-        """Get current game state, with caching."""
-        current_frame = self.emulator.total_frames
+        """Get current game state, with aggressive caching."""
+        import time
+        current_time = time.time()
         
-        if not force_refresh and self._state_cache and self._cache_frame == current_frame:
-            return self._state_cache
+        # Cache for at least 50ms (20 reads/sec max) unless forced
+        cache_duration = 0.05  # 50ms
+        
+        if not force_refresh and self._state_cache:
+            if hasattr(self, '_cache_time') and (current_time - self._cache_time) < cache_duration:
+                return self._state_cache
         
         state = self._read_game_state()
         self._state_cache = state
-        self._cache_frame = current_frame
+        self._cache_time = current_time
+        self._cache_frame = self.emulator.total_frames
         
-        # Track position history
-        if state.player_position.x != 0 or state.player_position.y != 0:
-            self.position_history.append(state.player_position)
-            if len(self.position_history) > self.max_history:
-                self.position_history.pop(0)
+        # Track position history (less frequently)
+        if len(self.position_history) == 0 or self.position_history[-1].x != state.player_position.x or self.position_history[-1].y != state.player_position.y:
+            if state.player_position.x != 0 or state.player_position.y != 0:
+                self.position_history.append(state.player_position)
+                if len(self.position_history) > self.max_history:
+                    self.position_history.pop(0)
         
         return state
     
