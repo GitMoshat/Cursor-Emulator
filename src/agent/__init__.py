@@ -1,15 +1,23 @@
 # AI Agent System for GBC Emulator
-from .interface import AgentInterface, GameState
+from .interface import AgentInterface, GameState, AgentConfig
 from .manager import AgentManager
 from .ollama_agent import OllamaAgent
-from .stub_agent import StubAgent, RandomAgent
+from .stub_agent import StubAgent, RandomAgent, ScriptedAgent
+from .guided_agent import GuidedOllamaAgent
+from .game_stages import StageManager, GameStage, POKEMON_STAGES
 
 __all__ = [
     'AgentInterface',
-    'GameState', 
+    'GameState',
+    'AgentConfig',
     'AgentManager',
     'OllamaAgent',
+    'GuidedOllamaAgent',
     'StubAgent',
     'RandomAgent',
+    'ScriptedAgent',
+    'StageManager',
+    'GameStage',
+    'POKEMON_STAGES',
 ]
 

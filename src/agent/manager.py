@@ -75,7 +75,9 @@ class AgentManager:
         """Register built-in agent types."""
         from .ollama_agent import OllamaAgent, OllamaAgentSimple
         from .stub_agent import StubAgent, RandomAgent, ScriptedAgent
+        from .guided_agent import GuidedOllamaAgent
         
+        self._agent_types['guided'] = GuidedOllamaAgent  # Default - best for Pokemon
         self._agent_types['ollama'] = OllamaAgent
         self._agent_types['ollama_simple'] = OllamaAgentSimple
         self._agent_types['stub'] = StubAgent

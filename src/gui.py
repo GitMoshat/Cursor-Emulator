@@ -49,9 +49,9 @@ class EmulatorGUI:
         self.tiles_width = 128
         self.tiles_height = 192
         
-        # Total window size
+        # Total window size (extra height for AI thinking panel)
         self.window_width = self.game_width + self.debug_panel_width + 30
-        self.window_height = max(self.game_height + 200, 700)
+        self.window_height = max(self.game_height + 280, 750)
         
         # Initialize Pygame
         pygame.init()
@@ -86,6 +86,8 @@ class EmulatorGUI:
         self.agent_manager = None
         self.agent_enabled = False
         self.agent_status_text = "AI: Not loaded"
+        self.agent_thinking_log: list = []
+        self.max_thinking_display = 8  # Lines to show in panel
         if AGENT_AVAILABLE:
             self.agent_manager = AgentManager(emulator)
         
@@ -132,6 +134,13 @@ class EmulatorGUI:
                         action = self.agent_manager.process_frame(frame)
                         if action and action.reasoning:
                             self.agent_status_text = f"AI: {action.reasoning[:40]}"
+                        
+                        # Update thinking log from agent
+                        if self.agent_manager.agent:
+                            if hasattr(self.agent_manager.agent, 'get_thinking_output'):
+                                self.agent_thinking_log = self.agent_manager.agent.get_thinking_output()
+                            elif hasattr(self.agent_manager.agent, 'thinking_history'):
+                                self.agent_thinking_log = self.agent_manager.agent.thinking_history
                 
                 # Only update display on last frame
                 self._update_game_surface(frame)
@@ -165,18 +174,22 @@ class EmulatorGUI:
             self.agent_manager.stop()
             self.agent_enabled = False
             self.agent_status_text = "AI: Stopped"
+            self.agent_thinking_log.append("[Stopped] Agent disabled")
         else:
             if not self.agent_manager.agent:
-                # Create default agent (Ollama)
-                agent = self.agent_manager.create_agent('ollama')
+                # Create default agent (Guided for Pokemon games)
+                agent = self.agent_manager.create_agent('guided')
                 if agent:
                     self.agent_manager.set_agent(agent)
+                    self.agent_thinking_log.append("[Init] Created GuidedOllama agent")
             
             if self.agent_manager.start():
                 self.agent_enabled = True
                 self.agent_status_text = f"AI: {self.agent_manager.agent.name} running"
+                self.agent_thinking_log.append(f"[Started] {self.agent_manager.agent.name}")
             else:
-                self.agent_status_text = "AI: Failed to start"
+                self.agent_status_text = "AI: Failed to start (check Ollama)"
+                self.agent_thinking_log.append("[Error] Failed to start - is Ollama running?")
     
     def _cycle_agent(self):
         """Cycle through available agent types."""
@@ -204,6 +217,16 @@ class EmulatorGUI:
         if agent:
             self.agent_manager.set_agent(agent)
             self.agent_status_text = f"AI: {agent.name} selected (F2 to start)"
+            self.agent_thinking_log.append(f"[Switch] Changed to {agent.name}")
+    
+    def _advance_agent_stage(self):
+        """Manually advance the AI agent's stage (for testing)."""
+        if not self.agent_manager or not self.agent_manager.agent:
+            return
+        
+        if hasattr(self.agent_manager.agent, 'manual_advance_stage'):
+            self.agent_manager.agent.manual_advance_stage()
+            self.agent_thinking_log.append("[Manual] Stage advanced by user")
     
     def _handle_events(self):
         """Handle input events."""
@@ -244,6 +267,10 @@ class EmulatorGUI:
                     # Cycle through agent types
                     self._cycle_agent()
                 
+                elif event.key == pygame.K_F4:
+                    # Manually advance AI stage (for testing)
+                    self._advance_agent_stage()
+                
                 elif event.key == pygame.K_n and self.emulator.paused:
                     # Step one instruction
                     self.emulator.step()
@@ -270,6 +297,10 @@ class EmulatorGUI:
         # Draw debug panel
         if self.show_debug:
             self._draw_debug_panel()
+        
+        # Draw AI thinking panel (below game display)
+        if self.agent_enabled or self.agent_thinking_log:
+            self._draw_thinking_panel()
         
         # Draw help
         self._draw_help()
@@ -449,6 +480,65 @@ class EmulatorGUI:
         # Draw tiles
         self.screen.blit(self.tiles_surface, (x, y))
     
+    def _draw_thinking_panel(self):
+        """Draw the AI thinking/reasoning panel."""
+        # Position below game display
+        x = 10
+        y = self.game_height + 50
+        panel_width = self.game_width
+        panel_height = 140
+        
+        # Background
+        pygame.draw.rect(self.screen, self.PANEL_BG, 
+                        (x - 5, y - 5, panel_width + 10, panel_height + 10))
+        pygame.draw.rect(self.screen, self.BORDER_COLOR,
+                        (x - 5, y - 5, panel_width + 10, panel_height + 10), 1)
+        
+        # Title with stage info
+        stage_info = ""
+        if self.agent_manager and self.agent_manager.agent:
+            if hasattr(self.agent_manager.agent, 'get_current_stage_info'):
+                info = self.agent_manager.agent.get_current_stage_info()
+                stage_info = f" - {info.get('name', '?')}"
+        
+        title_color = (100, 200, 100) if self.agent_enabled else self.HIGHLIGHT_COLOR
+        title = self.font_title.render(f"🤖 AI Thinking{stage_info}", True, title_color)
+        self.screen.blit(title, (x, y))
+        y += 22
+        
+        # Draw goal if available
+        if self.agent_manager and self.agent_manager.agent:
+            if hasattr(self.agent_manager.agent, 'get_current_stage_info'):
+                info = self.agent_manager.agent.get_current_stage_info()
+                goal = info.get('goal', '')[:60]
+                goal_text = self.font_small.render(f"Goal: {goal}", True, (180, 180, 100))
+                self.screen.blit(goal_text, (x, y))
+                y += 16
+        
+        # Draw thinking log
+        if self.agent_thinking_log:
+            recent = self.agent_thinking_log[-self.max_thinking_display:]
+            for line in recent:
+                # Truncate long lines
+                display_line = line[-70:] if len(line) > 70 else line
+                
+                # Color code based on content
+                if '✓' in line or 'success' in line.lower():
+                    color = (100, 200, 100)
+                elif '✗' in line or 'fail' in line.lower() or 'error' in line.lower():
+                    color = (200, 100, 100)
+                elif 'Goal:' in line or 'Stage:' in line:
+                    color = (200, 200, 100)
+                else:
+                    color = self.TEXT_COLOR
+                
+                text = self.font_small.render(display_line, True, color)
+                self.screen.blit(text, (x, y))
+                y += 14
+        else:
+            no_log = self.font_small.render("Press F2 to start AI agent", True, (120, 120, 120))
+            self.screen.blit(no_log, (x, y))
+    
     def _draw_help(self):
         """Draw control help at bottom."""
         y = self.window_height - 80
@@ -458,7 +548,7 @@ class EmulatorGUI:
         agent_str = "ON" if self.agent_enabled else "OFF"
         help_lines = [
             "Controls: Arrow Keys = D-Pad | Z = A | X = B | Enter = Start | RShift = Select",
-            "Space = Pause | R = Reset | TAB = Turbo | F2 = Toggle AI | F3 = Cycle AI Agent",
+            "Space = Pause | R = Reset | TAB = Turbo | F2 = AI On/Off | F3 = Cycle Agent | F4 = Skip Stage",
             f"Frame: {self.emulator.total_frames} | Turbo: {turbo_str} | {self.agent_status_text}"
         ]
         
