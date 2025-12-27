@@ -7,16 +7,12 @@ import time
 from typing import Optional, Callable
 import numpy as np
 
-from .cpu import CPU
 from .memory import Memory
+from .cpu import CPU
+from .ppu import PPU
 
-# Try to use fast PPU with Numba, fall back to regular PPU
-try:
-    from .ppu_fast import PPUFast as PPU
-    print("Using JIT-accelerated PPU")
-except ImportError:
-    from .ppu import PPU
-    print("Using standard PPU (install numba for better performance)")
+# Note: JIT PPU available in ppu_fast.py if needed
+print("Using standard CPU and PPU")
 
 
 class Emulator:
