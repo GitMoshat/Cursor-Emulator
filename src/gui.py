@@ -485,9 +485,32 @@ class EmulatorGUI:
             pygame.draw.rect(self.screen, (0, 0, 0, 180), pause_rect.inflate(20, 10))
             self.screen.blit(pause_text, pause_rect)
         
-        # FPS
-        fps_text = self.font_small.render(f"FPS: {self.last_fps:.1f}", True, self.TEXT_COLOR)
+        # FPS and performance stats
+        fps_color = (100, 255, 100) if self.last_fps >= 30 else (255, 255, 100) if self.last_fps >= 15 else (255, 100, 100)
+        fps_text = self.font_small.render(f"FPS: {self.last_fps:.1f}", True, fps_color)
         self.screen.blit(fps_text, (x, y + self.game_height + 5))
+        
+        # Show AI performance stats if available
+        if self.agent_manager and self.agent_manager.agent:
+            agent = self.agent_manager.agent
+            if hasattr(agent, 'perf_stats'):
+                stats = agent.perf_stats
+                llm_ms = stats.get('llm_avg_ms', 0)
+                llm_pending = getattr(agent, 'llm_pending', False)
+                
+                # LLM status indicator
+                if llm_pending:
+                    llm_status = "LLM: working..."
+                    llm_color = (255, 200, 100)
+                elif llm_ms > 0:
+                    llm_status = f"LLM: {int(llm_ms)}ms"
+                    llm_color = (150, 150, 150)
+                else:
+                    llm_status = "LLM: off"
+                    llm_color = (100, 100, 100)
+                
+                llm_text = self.font_small.render(llm_status, True, llm_color)
+                self.screen.blit(llm_text, (x + 80, y + self.game_height + 5))
     
     def _draw_debug_scan_overlay(self, display_x: int, display_y: int):
         """Draw debug rectangles showing what the AI is currently interacting with."""

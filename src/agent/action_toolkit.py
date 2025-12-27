@@ -476,8 +476,27 @@ class ToolkitAgent:
         self.target_grid_x = 0
         self.target_grid_y = 0
         
+        # Async LLM support - don't block game loop
+        self.llm_thread = None
+        self.llm_result = None
+        self.llm_pending = False
+        self.last_llm_call_time = 0
+        self.llm_cooldown = 2.0  # Seconds between LLM calls
+        
+        # Performance tracking
+        self.perf_stats = {
+            'llm_calls': 0,
+            'llm_avg_ms': 0,
+            'heuristic_calls': 0,
+            'state_reads': 0,
+            'frames_processed': 0,
+        }
+        self._llm_times = []
+        
         import time
         self.time = time
+        import threading
+        self.threading = threading
     
     def _generate_random_name(self) -> str:
         """Generate a random Pokemon-style name."""
@@ -740,20 +759,28 @@ Which action should I take? Respond with just the action name."""
         # Default to situation-based
         return self._get_heuristic_action(situation, state)
     
-    def _get_llm_action_with_goal(self, state, situation: str, goal) -> Optional[str]:
-        """Ask LLM which action to take, considering current goal."""
-        if not self.llm_connected:
-            return None
+    def _start_async_llm_call(self, state, situation: str, goal):
+        """Start async LLM call in background thread."""
+        if self.llm_pending or not self.llm_connected:
+            return
         
-        import requests
+        # Check cooldown
+        current_time = self.time.time()
+        if current_time - self.last_llm_call_time < self.llm_cooldown:
+            return
         
-        # Build prompt
+        self.last_llm_call_time = current_time
+        self.llm_pending = True
+        self.llm_result = None
+        
+        # Build prompt data
         available = self.toolkit.get_contextual_actions(situation)
-        actions_desc = "\n".join(f"- {a}: {self.toolkit.actions[a].description}" for a in available)
+        actions_desc = "\n".join(f"- {a}: {self.toolkit.actions[a].description}" for a in available if a in self.toolkit.actions)
         
         goal_context = ""
         if goal:
-            goal_context = f"GOAL: {goal.name} - {goal.description}\nHints: {', '.join(goal.action_hints[:2])}\n"
+            hints = goal.action_hints[:2] if hasattr(goal, 'action_hints') else []
+            goal_context = f"GOAL: {goal.name} - {goal.description}\nHints: {', '.join(hints)}\n"
         
         prompt = f"""You are playing Pokemon. Choose the best action.
 {goal_context}
@@ -767,65 +794,86 @@ Available actions:
 
 Which action? Reply with ONLY the action name."""
 
-        # Log RAW prompt
-        self._log("========== PROMPT ==========")
-        for line in prompt.strip().split('\n'):
-            self._log(line)
-        self._log("============================")
-
-        try:
-            resp = requests.post(
-                f"{self.ollama_host}/api/generate",
-                json={
-                    "model": self.ollama_model,
-                    "prompt": prompt,
-                    "system": "You are a Pokemon player AI. Reply with ONLY an action name.",
-                    "stream": False,
-                    "options": {"num_predict": 50, "temperature": 0.7}
-                },
-                timeout=10
-            )
-            
-            if resp.status_code == 200:
-                raw_response = resp.json().get('response', '').strip()
+        def llm_worker():
+            import requests
+            start_time = self.time.time()
+            try:
+                resp = requests.post(
+                    f"{self.ollama_host}/api/generate",
+                    json={
+                        "model": self.ollama_model,
+                        "prompt": prompt,
+                        "system": "You are a Pokemon player AI. Reply with ONLY an action name.",
+                        "stream": False,
+                        "options": {"num_predict": 30, "temperature": 0.5}
+                    },
+                    timeout=8
+                )
                 
-                # Log RAW response
-                self._log("========= RESPONSE =========")
-                self._log(raw_response)
-                self._log("============================")
+                elapsed_ms = (self.time.time() - start_time) * 1000
+                self._llm_times.append(elapsed_ms)
+                if len(self._llm_times) > 20:
+                    self._llm_times.pop(0)
+                self.perf_stats['llm_avg_ms'] = sum(self._llm_times) / len(self._llm_times)
+                self.perf_stats['llm_calls'] += 1
                 
-                # Parse action
-                action_name = raw_response.lower().replace('"', '').replace("'", "")
-                action_name = action_name.split()[0] if action_name else ""
-                
-                if action_name in self.toolkit.actions:
-                    return action_name
-        except Exception as e:
-            self._log(f"LLM Error: {e}")
+                if resp.status_code == 200:
+                    raw_response = resp.json().get('response', '').strip()
+                    action_name = raw_response.lower().replace('"', '').replace("'", "")
+                    action_name = action_name.split()[0] if action_name else ""
+                    
+                    if action_name in self.toolkit.actions:
+                        self.llm_result = action_name
+                        self._log(f"[ASYNC LLM] -> {action_name} ({int(elapsed_ms)}ms)")
+            except Exception as e:
+                self._log(f"[ASYNC LLM] Error: {e}")
+            finally:
+                self.llm_pending = False
         
+        self.llm_thread = self.threading.Thread(target=llm_worker, daemon=True)
+        self.llm_thread.start()
+    
+    def _get_async_llm_result(self) -> Optional[str]:
+        """Get result from async LLM call if available."""
+        if self.llm_result:
+            result = self.llm_result
+            self.llm_result = None
+            return result
+        return None
+    
+    def _get_llm_action_with_goal(self, state, situation: str, goal) -> Optional[str]:
+        """Get LLM action - now async, returns cached result or starts new call."""
+        # Check for completed async result first
+        result = self._get_async_llm_result()
+        if result:
+            return result
+        
+        # Start new async call if not pending (will be ready next decision)
+        if not self.llm_pending:
+            self._start_async_llm_call(state, situation, goal)
+        
+        # Return None - use heuristics this frame
         return None
     
     def decide(self, agent_state) -> 'AgentAction':
         from .interface import AgentAction
         
+        self.perf_stats['frames_processed'] += 1
+        
         if not self.memory_manager or not self.toolkit:
             return AgentAction(buttons_to_press=[Button.A], reasoning="No toolkit")
         
-        # Get state and situation - ALWAYS update this every frame
-        state = self.memory_manager.get_state()
-        situation = self._analyze_situation(state)
-        
-        # Update focus EVERY frame based on current state (even during hold)
-        # This ensures the debug overlay stays in sync with game state
-        if self.current_result:
-            current_action = self.current_result.message.split(':')[0] if ':' in self.current_result.message else "advance_dialog"
-        else:
-            current_action = "advance_dialog"
-        self._update_focus(current_action, state, situation)
-        
-        # Continue current action
+        # During hold frames, only update focus every 4 frames to save performance
         if self.hold_remaining > 0:
             self.hold_remaining -= 1
+            
+            # Update focus less frequently during holds (every 4 frames)
+            if self.hold_remaining % 4 == 0:
+                state = self.memory_manager.get_state()
+                situation = self._analyze_situation(state)
+                current_action = self.current_result.message.split(':')[0] if self.current_result and ':' in self.current_result.message else "advance_dialog"
+                self._update_focus(current_action, state, situation)
+            
             if self.current_result:
                 return AgentAction(
                     buttons_to_press=self.current_result.buttons,
@@ -833,6 +881,18 @@ Which action? Reply with ONLY the action name."""
                     reasoning=self.current_result.message
                 )
             return AgentAction()
+        
+        # Full state read for new decisions
+        self.perf_stats['state_reads'] += 1
+        state = self.memory_manager.get_state()
+        situation = self._analyze_situation(state)
+        
+        # Update focus with new state
+        if self.current_result:
+            current_action = self.current_result.message.split(':')[0] if ':' in self.current_result.message else "advance_dialog"
+        else:
+            current_action = "advance_dialog"
+        self._update_focus(current_action, state, situation)
         
         # Log detailed perception of the state
         self._log_perception(state, situation)
