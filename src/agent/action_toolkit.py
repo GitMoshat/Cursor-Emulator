@@ -547,21 +547,17 @@ Which action should I take? Respond with just the action name."""
         
         import requests
         
-        # Build prompt with goal and available actions
+        # Build prompt
         available = self.toolkit.get_contextual_actions(situation)
         actions_desc = "\n".join(f"- {a}: {self.toolkit.actions[a].description}" for a in available)
         
         goal_context = ""
         if goal:
-            goal_context = f"""
-CURRENT GOAL: {goal.name}
-Goal description: {goal.description}
-Hints: {', '.join(goal.action_hints[:2])}
-"""
+            goal_context = f"GOAL: {goal.name} - {goal.description}\nHints: {', '.join(goal.action_hints[:2])}\n"
         
         prompt = f"""You are playing Pokemon. Choose the best action.
 {goal_context}
-Current situation: {situation}
+Situation: {situation}
 Location: ({state.player_position.x}, {state.player_position.y}) - {state.player_position.map_name}
 Party: {state.party_count} Pokemon
 Has starter: {state.has_starter}
@@ -569,7 +565,13 @@ Has starter: {state.has_starter}
 Available actions:
 {actions_desc}
 
-Which action best helps achieve the goal? Reply with ONLY the action name."""
+Which action? Reply with ONLY the action name."""
+
+        # Log RAW prompt
+        self._log("========== PROMPT ==========")
+        for line in prompt.strip().split('\n'):
+            self._log(line)
+        self._log("============================")
 
         try:
             resp = requests.post(
@@ -577,22 +579,29 @@ Which action best helps achieve the goal? Reply with ONLY the action name."""
                 json={
                     "model": self.ollama_model,
                     "prompt": prompt,
-                    "system": "You are a Pokemon player AI. Choose actions to achieve goals. Reply with ONLY an action name, nothing else.",
+                    "system": "You are a Pokemon player AI. Reply with ONLY an action name.",
                     "stream": False,
-                    "options": {"num_predict": 20, "temperature": 0.5}
+                    "options": {"num_predict": 50, "temperature": 0.7}
                 },
-                timeout=8
+                timeout=10
             )
             
             if resp.status_code == 200:
-                action_name = resp.json().get('response', '').strip().lower()
-                action_name = action_name.replace('"', '').replace("'", "")
-                # Get first word
+                raw_response = resp.json().get('response', '').strip()
+                
+                # Log RAW response
+                self._log("========= RESPONSE =========")
+                self._log(raw_response)
+                self._log("============================")
+                
+                # Parse action
+                action_name = raw_response.lower().replace('"', '').replace("'", "")
                 action_name = action_name.split()[0] if action_name else ""
+                
                 if action_name in self.toolkit.actions:
                     return action_name
         except Exception as e:
-            pass
+            self._log(f"LLM Error: {e}")
         
         return None
     
@@ -679,73 +688,18 @@ Which action best helps achieve the goal? Reply with ONLY the action name."""
         )
     
     def _log_perception(self, state, situation: str):
-        """Log what the agent perceives from game state."""
-        # Only log perception changes to reduce spam
-        perception_key = f"{situation}_{state.menu.screen_type}_{state.menu.cursor_position}"
-        
+        """Minimal - raw LLM I/O is the main output."""
+        # Only log situation changes
+        perception_key = f"{situation}_{state.menu.screen_type}"
         if hasattr(self, '_last_perception') and self._last_perception == perception_key:
             return
         self._last_perception = perception_key
-        
-        self._log(f"─── PERCEIVING ───")
-        self._log(f"Screen: {state.menu.screen_type or situation}")
-        
-        if state.menu.in_menu or state.menu.text_active:
-            self._log(f"Menu cursor: pos={state.menu.cursor_position} xy=({state.menu.cursor_x},{state.menu.cursor_y})")
-            if state.menu.screen_type == "gender_select":
-                opt = "BOY" if state.menu.cursor_position == 0 else "GIRL"
-                self._log(f"Selected: {opt}")
-            elif state.menu.screen_type == "option_menu":
-                opt = "YES/First" if state.menu.cursor_position == 0 else "NO/Second"
-                self._log(f"Selected: {opt}")
-        
-        if state.battle.in_battle:
-            self._log(f"Battle vs {state.battle.enemy_name} Lv{state.battle.enemy_level}")
-            self._log(f"Battle menu: {['FIGHT','PKMN','ITEM','RUN'][state.battle.menu_state] if state.battle.menu_state < 4 else '?'}")
-        
-        if situation == "overworld":
-            self._log(f"Position: ({state.player_position.x},{state.player_position.y})")
-            self._log(f"Facing: {state.player_position.facing}")
-            self._log(f"Map: {state.player_position.map_name}")
+        self._log(f"[{situation.upper()}]")
     
     def _log_thinking_process(self, state, situation: str, goal):
-        """Log the agent's thinking about what to do."""
-        self._log(f"─── THINKING ───")
-        
-        if goal:
-            self._log(f"Goal: {goal.name}")
-        
-        # Explain reasoning based on situation
-        if situation == "title":
-            self._log("I see the title screen. Need to press START to begin.")
-        
-        elif situation == "dialog":
-            self._log("Text on screen. I should advance it with A button.")
-        
-        elif situation == "menu":
-            screen = state.menu.screen_type
-            if screen == "gender_select":
-                self._log(f"Gender selection! Cursor at option {state.menu.cursor_position}")
-                self._log("I'll select the current option with A.")
-            elif screen == "option_menu":
-                self._log(f"Yes/No menu. Cursor at option {state.menu.cursor_position}")
-            elif screen == "name_entry":
-                self._log(f"Name entry screen. Cursor at position {state.menu.cursor_position}")
-            else:
-                self._log(f"In a menu (type: {screen}). Cursor at {state.menu.cursor_position}")
-        
-        elif situation == "battle":
-            menu_opts = ["FIGHT", "PKMN", "ITEM", "RUN"]
-            sel = menu_opts[state.battle.menu_state] if state.battle.menu_state < 4 else "?"
-            self._log(f"In battle! Selected: {sel}")
-            self._log(f"Enemy: {state.battle.enemy_name}")
-        
-        elif situation == "overworld":
-            self._log(f"Exploring {state.player_position.map_name}")
-            if goal and goal.id == "find_professor":
-                self._log("Looking for the Professor. Will explore and interact with NPCs.")
-            elif goal and goal.id == "leave_house":
-                self._log("Need to find the exit. Usually down from starting position.")
+        """Minimal logging - main output is raw LLM I/O."""
+        # Just log the situation change, LLM prompt/response handles the rest
+        pass
     
     def get_thinking_output(self) -> List[str]:
         return self.thinking_history.copy()
