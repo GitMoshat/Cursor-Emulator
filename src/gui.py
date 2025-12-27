@@ -78,21 +78,42 @@ class EmulatorGUI:
         self.tiles_surface = pygame.Surface((128, 192))
         
         # Frame skip for performance
-        self.frame_skip = 0  # 0 = no skip, 1 = skip every other, 2 = skip 2 of 3
+        self.frame_skip = 2  # 0 = no skip, 1 = skip every other, 2 = skip 2 of 3
         self.frame_counter = 0
-        self.turbo_mode = False
+        self.turbo_mode = True  # Default ON for faster gameplay
         
         # AI Agent system
         self.agent_manager = None
         self.agent_enabled = False
-        self.agent_status_text = "AI: Not loaded"
-        self.agent_thinking_log: list = []
+        self.agent_status_text = "AI: Ready (F2 to start)"
+        self.agent_thinking_log: list = ["[Ready] Press F2 to start AI agent"]
         self.max_thinking_display = 8  # Lines to show in panel
+        self.show_ai_panel = True  # Always show AI panel by default
         if AGENT_AVAILABLE:
             self.agent_manager = AgentManager(emulator)
         
+        # UI Buttons
+        self.buttons: dict = {}
+        self._init_buttons()
+        
         # State
         self.running = True
+    
+    def _init_buttons(self):
+        """Initialize UI button positions."""
+        # Button dimensions
+        btn_w, btn_h = 70, 24
+        btn_y = self.game_height + 15  # Below game display
+        btn_x = 10
+        spacing = 5
+        
+        # Create button rectangles
+        self.buttons = {
+            'turbo': pygame.Rect(btn_x, btn_y, btn_w, btn_h),
+            'ai': pygame.Rect(btn_x + btn_w + spacing, btn_y, btn_w, btn_h),
+            'ai_panel': pygame.Rect(btn_x + (btn_w + spacing) * 2, btn_y, btn_w + 10, btn_h),
+            'reset': pygame.Rect(btn_x + (btn_w + spacing) * 3 + 10, btn_y, btn_w - 10, btn_h),
+        }
         self.show_tilemap = True
         self.show_tiles = True
         self.show_debug = True
@@ -238,12 +259,38 @@ class EmulatorGUI:
             self.agent_manager.agent.manual_advance_stage()
             self.agent_thinking_log.append("[Manual] Stage advanced by user")
     
+    def _handle_button_click(self, pos):
+        """Handle mouse clicks on UI buttons."""
+        for name, rect in self.buttons.items():
+            if rect.collidepoint(pos):
+                if name == 'turbo':
+                    self.turbo_mode = not self.turbo_mode
+                    self.frame_skip = 2 if self.turbo_mode else 0
+                    mode_str = "TURBO ON ⚡" if self.turbo_mode else "Normal speed"
+                    self.agent_thinking_log.append(f"[Speed] {mode_str}")
+                
+                elif name == 'ai':
+                    self._toggle_agent()
+                
+                elif name == 'ai_panel':
+                    self.show_ai_panel = not self.show_ai_panel
+                
+                elif name == 'reset':
+                    self.emulator.reset()
+                    self.agent_thinking_log.append("[Reset] Game reset")
+                
+                break
+    
     def _handle_events(self):
         """Handle input events."""
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 self.running = False
                 self.emulator.running = False
+            
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                if event.button == 1:  # Left click
+                    self._handle_button_click(event.pos)
             
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
@@ -307,18 +354,53 @@ class EmulatorGUI:
         # Draw game display
         self._draw_game_display()
         
+        # Draw UI buttons
+        self._draw_buttons()
+        
         # Draw debug panel
         if self.show_debug:
             self._draw_debug_panel()
         
         # Draw AI thinking panel (below game display)
-        if self.agent_enabled or self.agent_thinking_log:
+        if self.show_ai_panel:
             self._draw_thinking_panel()
         
         # Draw help
         self._draw_help()
         
         pygame.display.flip()
+    
+    def _draw_buttons(self):
+        """Draw clickable UI buttons."""
+        for name, rect in self.buttons.items():
+            # Determine button state/color
+            if name == 'turbo':
+                active = self.turbo_mode
+                label = "⚡ TURBO" if active else "TURBO"
+                color = (80, 150, 80) if active else (60, 60, 70)
+            elif name == 'ai':
+                active = self.agent_enabled
+                label = "🤖 AI ON" if active else "AI OFF"
+                color = (80, 120, 180) if active else (60, 60, 70)
+            elif name == 'ai_panel':
+                active = self.show_ai_panel
+                label = "📊 PANEL" if active else "PANEL"
+                color = (100, 100, 120) if active else (60, 60, 70)
+            elif name == 'reset':
+                active = False
+                label = "↺ RESET"
+                color = (120, 60, 60)
+            else:
+                continue
+            
+            # Draw button background
+            pygame.draw.rect(self.screen, color, rect)
+            pygame.draw.rect(self.screen, (100, 100, 110), rect, 1)
+            
+            # Draw button label
+            text = self.font_small.render(label, True, (220, 220, 220))
+            text_rect = text.get_rect(center=rect.center)
+            self.screen.blit(text, text_rect)
     
     def _draw_game_display(self):
         """Draw the main game display."""
@@ -495,11 +577,11 @@ class EmulatorGUI:
     
     def _draw_thinking_panel(self):
         """Draw the AI thinking/reasoning panel with memory state."""
-        # Position below game display
+        # Position below game display (after buttons)
         x = 10
-        y = self.game_height + 50
+        y = self.game_height + 45  # Below buttons
         panel_width = self.game_width + 200  # Wider for memory info
-        panel_height = 160
+        panel_height = 165
         
         # Background
         pygame.draw.rect(self.screen, self.PANEL_BG, 
