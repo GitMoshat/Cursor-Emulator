@@ -54,6 +54,10 @@ class AgentManager:
         self.action_frames_remaining = 0
         self.buttons_held: set = set()
         
+        # Turbo mode support
+        self.turbo_mode = False
+        self.turbo_multiplier = 4  # How much faster turbo runs
+        
         # Frame history for context
         self.frame_history: List[np.ndarray] = []
         self.max_frame_history = 4
@@ -149,22 +153,31 @@ class AgentManager:
         
         print("Agent stopped")
     
-    def process_frame(self, frame: np.ndarray) -> Optional[AgentAction]:
+    def process_frame(self, frame: np.ndarray, turbo: bool = False) -> Optional[AgentAction]:
         """
         Process a frame and get agent action.
         Called by the emulator/GUI each frame.
+        
+        Args:
+            frame: Current frame buffer
+            turbo: Whether turbo mode is active (adjusts timing)
         """
         if not self.running or not self.agent:
             return None
         
+        self.turbo_mode = turbo
         self.stats['frames_processed'] += 1
+        
+        # In turbo mode, action holds are shorter (game runs faster)
+        hold_decrement = self.turbo_multiplier if turbo else 1
         
         # Handle current action hold
         if self.action_frames_remaining > 0:
-            self.action_frames_remaining -= 1
-            if self.action_frames_remaining == 0:
+            self.action_frames_remaining -= hold_decrement
+            if self.action_frames_remaining <= 0:
                 # Release held buttons
                 self._release_action_buttons()
+                self.action_frames_remaining = 0
             return None
         
         # Update frame history
@@ -189,7 +202,9 @@ class AgentManager:
             self.stats['actions_taken'] += 1
             self._execute_action(action)
             self.current_action = action
-            self.action_frames_remaining = action.hold_frames - 1
+            # In turbo mode, multiply hold frames so effective duration stays similar
+            effective_hold = action.hold_frames * (self.turbo_multiplier if turbo else 1)
+            self.action_frames_remaining = effective_hold - hold_decrement
         
         return action
     

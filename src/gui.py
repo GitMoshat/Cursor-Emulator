@@ -126,14 +126,24 @@ class EmulatorGUI:
                 # Run frame(s) with optional frame skip
                 frames_to_run = 1 + self.frame_skip if self.turbo_mode else 1
                 
+                # In turbo mode with AI, run more frames but process AI less frequently
+                if self.turbo_mode and self.agent_enabled:
+                    frames_to_run = 4  # Run 4 frames per loop iteration in turbo
+                
                 for i in range(frames_to_run):
                     frame = self.emulator.run_frame()
                     
-                    # Let AI agent process frame
+                    # Let AI agent process frame (in turbo, only process every Nth frame)
                     if self.agent_manager and self.agent_enabled:
-                        action = self.agent_manager.process_frame(frame)
-                        if action and action.reasoning:
-                            self.agent_status_text = f"AI: {action.reasoning[:40]}"
+                        # In turbo mode, process AI on first frame of batch only
+                        # This prevents AI from getting overwhelmed
+                        should_process_ai = (not self.turbo_mode) or (i == 0)
+                        
+                        if should_process_ai:
+                            action = self.agent_manager.process_frame(frame, turbo=self.turbo_mode)
+                            if action and action.reasoning:
+                                turbo_str = " [TURBO]" if self.turbo_mode else ""
+                                self.agent_status_text = f"AI{turbo_str}: {action.reasoning[:35]}"
                         
                         # Update thinking log from agent
                         if self.agent_manager.agent:
@@ -258,6 +268,9 @@ class EmulatorGUI:
                 elif event.key == pygame.K_TAB:
                     self.turbo_mode = not self.turbo_mode
                     self.frame_skip = 2 if self.turbo_mode else 0
+                    if self.agent_enabled:
+                        mode_str = "TURBO ON ⚡" if self.turbo_mode else "Normal speed"
+                        self.agent_thinking_log.append(f"[Speed] {mode_str}")
                 
                 elif event.key == pygame.K_F2:
                     # Toggle AI agent
