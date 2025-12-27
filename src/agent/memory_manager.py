@@ -68,8 +68,12 @@ class MenuState:
     in_menu: bool = False
     menu_type: str = ""  # "main", "pokemon", "items", "save", "dialog", etc.
     cursor_position: int = 0
+    cursor_x: int = 0  # X position in grid menus
+    cursor_y: int = 0  # Y position in grid menus
     text_active: bool = False
     options_count: int = 0
+    screen_type: str = ""  # "title", "name_entry", "gender_select", "overworld", "battle", etc.
+    selection_y_pixel: int = 0  # Approximate Y pixel of current selection
 
 
 @dataclass
@@ -290,9 +294,15 @@ POKEMON_GSC_ADDRESSES = {
     
     # Menu/UI
     'menu_open': 0xCF63,       # wMenuCursorY
-    'cursor_pos': 0xCF64,      # wMenuCursorX
+    'cursor_pos': 0xCF64,      # wMenuCursorX / wMenuCursorPosition
+    'cursor_y': 0xCF63,        # wMenuCursorY - Y position (row)
+    'cursor_x': 0xCF64,        # wMenuCursorX - X position (column)
     'text_delay': 0xCFC9,      # wTextDelayFrames
     'joy_pressed': 0xCFA5,     # wJoyPressed - button state
+    'window_data': 0xCF81,     # wWindowStackPointer - menu window tracking
+    'wram_state': 0xD0D7,      # wScriptMode / game state
+    'intro_scene': 0xD002,     # Intro/new game scene tracking
+    'script_running': 0xD438,  # wScriptRunning - is a script/cutscene active
     
     # Flags
     'has_pokedex': 0xD84C,     # wPokedexCaught flags start
@@ -688,7 +698,7 @@ class MemoryManager:
                     if 'battle_menu' in self.addresses:
                         state.battle.menu_state = self.read_byte(self.addresses['battle_menu'])
             
-            # Menu state
+            # Menu state - enhanced detection
             if 'menu_open' in self.addresses:
                 menu_val = self.read_byte(self.addresses['menu_open'])
                 state.menu.in_menu = menu_val != 0
@@ -696,9 +706,21 @@ class MemoryManager:
                 if 'cursor_pos' in self.addresses:
                     state.menu.cursor_position = self.read_byte(self.addresses['cursor_pos'])
                 
+                # Get X and Y cursor positions separately
+                if 'cursor_y' in self.addresses:
+                    state.menu.cursor_y = self.read_byte(self.addresses['cursor_y'])
+                if 'cursor_x' in self.addresses:
+                    state.menu.cursor_x = self.read_byte(self.addresses['cursor_x'])
+                
                 if 'text_progress' in self.addresses:
                     text_val = self.read_byte(self.addresses['text_progress'])
                     state.menu.text_active = text_val != 0
+            
+            # Detect screen type based on game state
+            state.menu.screen_type = self._detect_screen_type(state)
+            
+            # Calculate approximate Y pixel position of selection
+            state.menu.selection_y_pixel = self._calculate_selection_pixel(state)
             
             # Game progress flags
             if 'has_pokedex' in self.addresses:
@@ -721,6 +743,95 @@ class MemoryManager:
             print(f"[MemoryManager] Error reading state: {e}")
         
         return state
+    
+    def _detect_screen_type(self, state: GameState) -> str:
+        """Detect what type of screen/menu we're on."""
+        # Check battle first
+        if state.battle.in_battle:
+            return "battle"
+        
+        # Check various game state indicators
+        game_state = self.read_byte(self.addresses.get('game_state', 0))
+        intro_scene = self.read_byte(self.addresses.get('intro_scene', 0))
+        script_running = self.read_byte(self.addresses.get('script_running', 0))
+        wram_state = self.read_byte(self.addresses.get('wram_state', 0))
+        
+        # Title screen detection - usually game_state is 0 at title
+        if game_state == 0 and state.party_count == 0 and not state.game_started:
+            return "title"
+        
+        # New game / intro scenes
+        if intro_scene != 0 or (game_state == 1 and state.party_count == 0):
+            # During intro/new game
+            if state.menu.cursor_position in [0, 1]:
+                # Could be gender select (BOY/GIRL) or other two-option
+                return "gender_select"
+            elif state.menu.in_menu:
+                return "name_entry"
+            return "intro"
+        
+        # Check if in dialog/text
+        if state.menu.text_active:
+            return "dialog"
+        
+        # Regular menu open
+        if state.menu.in_menu:
+            # Distinguish menu types if possible
+            cursor_y = state.menu.cursor_y
+            cursor_x = state.menu.cursor_x
+            
+            if cursor_y <= 1 and cursor_x <= 1:
+                # Small menu - likely yes/no or options
+                return "option_menu"
+            
+            return "menu"
+        
+        # Overworld
+        return "overworld"
+    
+    def _calculate_selection_pixel(self, state: GameState) -> int:
+        """Calculate approximate Y pixel position of current menu selection."""
+        screen_type = state.menu.screen_type
+        cursor_y = state.menu.cursor_y
+        cursor_pos = state.menu.cursor_position
+        
+        # Screen is 144 pixels tall, 160 wide
+        # Tiles are 8x8 pixels
+        
+        if screen_type == "gender_select":
+            # Gender select typically has options at fixed positions
+            # Approximately: BOY around Y=72, GIRL around Y=88
+            base_y = 56  # Where first option starts
+            spacing = 16  # Pixels between options
+            return base_y + (cursor_pos * spacing)
+        
+        elif screen_type == "option_menu":
+            # Yes/No type menus
+            base_y = 72
+            spacing = 16
+            return base_y + (cursor_pos * spacing)
+        
+        elif screen_type == "name_entry":
+            # Name entry grid - calculate from grid position
+            grid_y = cursor_pos // 10  # Assuming 10-column grid
+            base_y = 48  # Where grid starts
+            tile_height = 16
+            return base_y + (grid_y * tile_height)
+        
+        elif screen_type == "menu":
+            # Standard menu
+            base_y = 24  # Menu starts near top
+            spacing = 16
+            return base_y + (cursor_y * spacing)
+        
+        elif screen_type == "battle":
+            # Battle menu at bottom of screen
+            base_y = 96
+            row = state.battle.menu_state // 2
+            return base_y + (row * 24)
+        
+        # Default - use cursor_y
+        return 40 + (cursor_y * 16)
     
     def add_watcher(self, name: str, address: int, value_type: str = "byte"):
         """Add a custom memory watcher."""

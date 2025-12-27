@@ -490,7 +490,7 @@ class EmulatorGUI:
         self.screen.blit(fps_text, (x, y + self.game_height + 5))
     
     def _draw_debug_scan_overlay(self, display_x: int, display_y: int):
-        """Draw debug rectangles showing what the AI is scanning."""
+        """Draw debug rectangles showing what the AI is currently interacting with."""
         if not self.agent_manager or not self.agent_manager.agent:
             return
         
@@ -506,97 +506,271 @@ class EmulatorGUI:
         if not mem_state:
             return
         
-        # Colors for different scan types
-        COLOR_PLAYER = (255, 50, 50)      # Red - player position
-        COLOR_SPRITE = (255, 150, 50)     # Orange - sprites/NPCs  
-        COLOR_INTERACT = (255, 255, 50)   # Yellow - interaction point
-        COLOR_SCAN_LINE = (255, 0, 0, 128) # Red semi-transparent scan lines
+        # Colors
+        COLOR_FOCUS = (255, 50, 50)       # Red - current focus/selection
+        COLOR_MENU = (255, 100, 100)      # Light red - menu area
+        COLOR_CURSOR = (255, 255, 0)      # Yellow - cursor position
+        COLOR_OPTION = (255, 200, 50)     # Orange - selectable options
         
-        # === PLAYER POSITION ===
-        # Draw rectangle around player (center of screen in most cases)
-        # Player is typically at screen center or offset by scroll
-        player_screen_x = 80  # Center X (player is usually centered)
-        player_screen_y = 72  # Center Y
-        
-        # Convert to display coordinates
-        px = display_x + int(player_screen_x * scale_x)
-        py = display_y + int(player_screen_y * scale_y)
-        pw = int(16 * scale_x)  # Player sprite is 16x16
-        ph = int(16 * scale_y)
-        
-        # Draw player box with pulsing effect
         import time
-        pulse = abs(int(time.time() * 4) % 2)
-        player_color = COLOR_PLAYER if pulse else (200, 50, 50)
-        pygame.draw.rect(self.screen, player_color, (px - pw//2, py - ph//2, pw, ph), 2)
+        pulse = (int(time.time() * 6) % 2) == 0  # Faster pulse
         
-        # Draw facing direction indicator
+        # Determine what mode we're in and highlight accordingly
+        if mem_state.battle.in_battle:
+            # === BATTLE MODE ===
+            self._draw_battle_debug(display_x, display_y, scale_x, scale_y, mem_state, pulse)
+        
+        elif mem_state.menu.text_active or mem_state.menu.in_menu:
+            # === MENU/DIALOG MODE ===
+            self._draw_menu_debug(display_x, display_y, scale_x, scale_y, mem_state, pulse)
+        
+        else:
+            # === OVERWORLD MODE ===
+            self._draw_overworld_debug(display_x, display_y, scale_x, scale_y, mem_state, pulse)
+        
+        # Always show current state label
+        state_label = "BATTLE" if mem_state.battle.in_battle else \
+                     "MENU" if mem_state.menu.in_menu else \
+                     "DIALOG" if mem_state.menu.text_active else "EXPLORE"
+        color = (255, 100, 100) if pulse else (200, 80, 80)
+        state_text = self.font_small.render(f"[{state_label}]", True, color)
+        self.screen.blit(state_text, (display_x + 5, display_y + 5))
+    
+    def _draw_menu_debug(self, dx, dy, sx, sy, mem_state, pulse):
+        """Draw debug overlay for menu/dialog screens that follows the actual selection."""
+        COLOR_FOCUS = (255, 50, 50) if pulse else (200, 40, 40)
+        COLOR_BOX = (255, 100, 100)
+        COLOR_ARROW = (255, 255, 0)
+        
+        cursor_pos = mem_state.menu.cursor_position
+        cursor_x = mem_state.menu.cursor_x
+        cursor_y = mem_state.menu.cursor_y
+        screen_type = mem_state.menu.screen_type
+        selection_y = mem_state.menu.selection_y_pixel
+        
+        # Screen type label
+        type_label = self.font_small.render(f"[{screen_type.upper()}]", True, (200, 150, 150))
+        self.screen.blit(type_label, (dx + self.game_width - 100, dy + 22))
+        
+        # Draw based on screen type
+        if screen_type == "gender_select":
+            # Gender select: BOY/GIRL options
+            # These are typically displayed in a window in the center-right
+            option_x = int(88 * sx)  # Right side of screen
+            option_w = int(48 * sx)
+            option_h = int(14 * sy)
+            
+            labels = ["BOY", "GIRL"]
+            for i in range(2):
+                opt_y = dy + int((56 + i * 16) * sy)
+                is_selected = (i == cursor_pos)
+                
+                if is_selected:
+                    # Draw prominent selection box
+                    pygame.draw.rect(self.screen, (60, 15, 15), 
+                                    (dx + option_x - 4, opt_y - 2, option_w + 8, option_h + 4))
+                    pygame.draw.rect(self.screen, COLOR_FOCUS, 
+                                    (dx + option_x - 4, opt_y - 2, option_w + 8, option_h + 4), 3)
+                    # Selection arrow
+                    arrow_x = dx + option_x - 16
+                    pygame.draw.polygon(self.screen, COLOR_ARROW, [
+                        (arrow_x, opt_y + option_h//2),
+                        (arrow_x + 10, opt_y - 2),
+                        (arrow_x + 10, opt_y + option_h + 2)
+                    ])
+                    # Label the selection
+                    sel_text = self.font_small.render(f"→ {labels[i]}", True, COLOR_ARROW)
+                    self.screen.blit(sel_text, (dx + 5, dy + 36))
+                else:
+                    pygame.draw.rect(self.screen, (100, 60, 60), 
+                                    (dx + option_x, opt_y, option_w, option_h), 1)
+        
+        elif screen_type == "option_menu":
+            # Yes/No style menus
+            option_x = int(96 * sx)  # Usually right side
+            option_w = int(48 * sx)
+            option_h = int(14 * sy)
+            
+            for i in range(2):
+                opt_y = dy + int((72 + i * 16) * sy)
+                is_selected = (i == cursor_pos)
+                
+                if is_selected:
+                    pygame.draw.rect(self.screen, (60, 15, 15), 
+                                    (dx + option_x - 4, opt_y - 2, option_w + 8, option_h + 4))
+                    pygame.draw.rect(self.screen, COLOR_FOCUS, 
+                                    (dx + option_x - 4, opt_y - 2, option_w + 8, option_h + 4), 3)
+                    # Arrow
+                    pygame.draw.polygon(self.screen, COLOR_ARROW, [
+                        (dx + option_x - 14, opt_y + option_h//2),
+                        (dx + option_x - 6, opt_y),
+                        (dx + option_x - 6, opt_y + option_h)
+                    ])
+                else:
+                    pygame.draw.rect(self.screen, (100, 60, 60), 
+                                    (dx + option_x, opt_y, option_w, option_h), 1)
+        
+        elif screen_type == "name_entry":
+            # Name entry grid
+            grid_cols = 10
+            grid_start_x = 8
+            grid_start_y = 48
+            tile_size = 16
+            
+            grid_x = cursor_pos % grid_cols
+            grid_y_pos = cursor_pos // grid_cols
+            
+            px = dx + int((grid_start_x + grid_x * tile_size) * sx)
+            py = dy + int((grid_start_y + grid_y_pos * tile_size) * sy)
+            pw = int(tile_size * sx)
+            ph = int(tile_size * sy)
+            
+            # Draw grid position highlight
+            pygame.draw.rect(self.screen, COLOR_FOCUS, (px - 2, py - 2, pw + 4, ph + 4), 3)
+            
+            # Grid position label
+            pos_text = self.font_small.render(f"Grid: ({grid_x},{grid_y_pos})", True, COLOR_ARROW)
+            self.screen.blit(pos_text, (dx + 5, dy + 36))
+        
+        elif screen_type == "dialog":
+            # Dialog box - highlight the text area
+            text_box_y = dy + int(96 * sy)
+            text_box_h = int(48 * sy)
+            pygame.draw.rect(self.screen, COLOR_BOX, 
+                            (dx + 4, text_box_y, self.game_width - 8, text_box_h), 2)
+            
+            # "Press A" indicator if text is waiting
+            pygame.draw.polygon(self.screen, COLOR_ARROW, [
+                (dx + self.game_width - 20, text_box_y + text_box_h - 8),
+                (dx + self.game_width - 12, text_box_y + text_box_h - 16),
+                (dx + self.game_width - 28, text_box_y + text_box_h - 16)
+            ])
+        
+        else:
+            # Generic menu - use calculated Y position
+            option_x = int(16 * sx)
+            option_w = int(120 * sx)
+            option_h = int(14 * sy)
+            opt_y = dy + int(selection_y * sy)
+            
+            pygame.draw.rect(self.screen, COLOR_FOCUS, 
+                            (dx + option_x, opt_y - 2, option_w, option_h + 4), 2)
+        
+        # Always show cursor position info
+        cursor_text = self.font_small.render(f"C:{cursor_pos} XY:({cursor_x},{cursor_y})", True, (255, 200, 100))
+        self.screen.blit(cursor_text, (dx + 5, dy + 22))
+    
+    def _draw_battle_debug(self, dx, dy, sx, sy, mem_state, pulse):
+        """Draw debug overlay for battle screens that highlights the selected option."""
+        COLOR_FOCUS = (255, 50, 50) if pulse else (200, 40, 40)
+        COLOR_ARROW = (255, 255, 0)
+        
+        battle = mem_state.battle
+        menu_state = battle.menu_state
+        
+        # Battle menu is a 2x2 grid at bottom-right
+        # FIGHT | PKMN
+        # ITEM  | RUN
+        menu_base_x = 80  # Pixels from left
+        menu_base_y = 112  # Pixels from top
+        cell_w = 40
+        cell_h = 16
+        
+        options = ["FIGHT", "PKMN", "ITEM", "RUN"]
+        
+        # Draw all four options with appropriate highlighting
+        for i in range(4):
+            col = i % 2
+            row = i // 2
+            opt_x = dx + int((menu_base_x + col * cell_w) * sx)
+            opt_y = dy + int((menu_base_y + row * cell_h) * sy)
+            opt_w = int(cell_w * sx) - 4
+            opt_h = int(cell_h * sy) - 2
+            
+            if i == menu_state:
+                # Selected option - prominent highlight
+                pygame.draw.rect(self.screen, (50, 15, 15), 
+                                (opt_x - 3, opt_y - 2, opt_w + 6, opt_h + 4))
+                pygame.draw.rect(self.screen, COLOR_FOCUS, 
+                                (opt_x - 3, opt_y - 2, opt_w + 6, opt_h + 4), 3)
+                # Selection arrow
+                pygame.draw.polygon(self.screen, COLOR_ARROW, [
+                    (opt_x - 10, opt_y + opt_h//2),
+                    (opt_x - 4, opt_y),
+                    (opt_x - 4, opt_y + opt_h)
+                ])
+            else:
+                # Non-selected options - dim outline
+                pygame.draw.rect(self.screen, (80, 50, 50), 
+                                (opt_x, opt_y, opt_w, opt_h), 1)
+        
+        # Current selection label
+        if menu_state < len(options):
+            label = self.font_small.render(f"→ {options[menu_state]}", True, COLOR_ARROW)
+            self.screen.blit(label, (dx + 5, dy + 36))
+        
+        # Enemy info box (top-left area)
+        enemy_box_x = dx + int(8 * sx)
+        enemy_box_y = dy + int(8 * sy)
+        enemy_box_w = int(96 * sx)
+        enemy_box_h = int(32 * sy)
+        pygame.draw.rect(self.screen, (255, 150, 50), 
+                        (enemy_box_x, enemy_box_y, enemy_box_w, enemy_box_h), 1)
+        
+        # Player info box (right side, middle)
+        player_box_x = dx + int(56 * sx)
+        player_box_y = dy + int(56 * sy)
+        player_box_w = int(96 * sx)
+        player_box_h = int(32 * sy)
+        pygame.draw.rect(self.screen, (100, 255, 100), 
+                        (player_box_x, player_box_y, player_box_w, player_box_h), 1)
+        
+        # Battle status
+        enemy_info = f"vs {battle.enemy_name} Lv{battle.enemy_level}"
+        info_text = self.font_small.render(enemy_info, True, (255, 150, 150))
+        self.screen.blit(info_text, (dx + 5, dy + 22))
+    
+    def _draw_overworld_debug(self, dx, dy, sx, sy, mem_state, pulse):
+        """Draw debug overlay for overworld exploration."""
+        COLOR_PLAYER = (255, 50, 50) if pulse else (200, 40, 40)
+        COLOR_INTERACT = (255, 255, 50)
+        
+        # Player is typically centered on screen
+        px = dx + int(80 * sx)
+        py = dy + int(72 * sy)
+        pw = int(16 * sx)
+        ph = int(16 * sy)
+        
+        # Player box
+        pygame.draw.rect(self.screen, COLOR_PLAYER, 
+                        (px - pw//2, py - ph//2, pw, ph), 2)
+        
+        # Facing direction and interaction zone
         facing = mem_state.player_position.facing
-        arrow_len = int(20 * scale_x)
-        cx, cy = px, py
-        if facing == "up":
-            pygame.draw.line(self.screen, COLOR_INTERACT, (cx, cy - ph//2), (cx, cy - ph//2 - arrow_len), 3)
-        elif facing == "down":
-            pygame.draw.line(self.screen, COLOR_INTERACT, (cx, cy + ph//2), (cx, cy + ph//2 + arrow_len), 3)
-        elif facing == "left":
-            pygame.draw.line(self.screen, COLOR_INTERACT, (cx - pw//2, cy), (cx - pw//2 - arrow_len, cy), 3)
-        elif facing == "right":
-            pygame.draw.line(self.screen, COLOR_INTERACT, (cx + pw//2, cy), (cx + pw//2 + arrow_len, cy), 3)
+        tile_size = int(16 * sx)
+        interact_x, interact_y = px, py
         
-        # === SCAN LINES ===
-        # Draw horizontal and vertical scan lines through player
-        scan_alpha = 80
-        # Horizontal scan line
-        pygame.draw.line(self.screen, (255, 0, 0), 
-                        (display_x, py), (display_x + self.game_width, py), 1)
-        # Vertical scan line
-        pygame.draw.line(self.screen, (255, 0, 0),
-                        (px, display_y), (px, display_y + self.game_height), 1)
-        
-        # === SPRITES / NPCs ===
-        # Draw rectangles around visible sprites
-        if hasattr(mem_state, 'sprites'):
-            for sprite in mem_state.sprites[:10]:  # Limit to 10 sprites
-                if hasattr(sprite, 'visible') and sprite.visible:
-                    # Sprite position relative to screen
-                    sx = display_x + int(sprite.x * scale_x)
-                    sy = display_y + int(sprite.y * scale_y)
-                    sw = int(8 * scale_x)
-                    sh = int(8 * scale_y)
-                    pygame.draw.rect(self.screen, COLOR_SPRITE, (sx, sy, sw, sh), 1)
-        
-        # === INTERACTION ZONE ===
-        # Highlight the tile the player is facing (where A button would interact)
-        interact_x, interact_y = cx, cy
-        tile_size = int(16 * scale_x)
         if facing == "up":
             interact_y -= tile_size
+            pygame.draw.line(self.screen, COLOR_INTERACT, (px, py - ph//2), (px, py - ph//2 - 10), 2)
         elif facing == "down":
             interact_y += tile_size
+            pygame.draw.line(self.screen, COLOR_INTERACT, (px, py + ph//2), (px, py + ph//2 + 10), 2)
         elif facing == "left":
             interact_x -= tile_size
+            pygame.draw.line(self.screen, COLOR_INTERACT, (px - pw//2, py), (px - pw//2 - 10, py), 2)
         elif facing == "right":
             interact_x += tile_size
+            pygame.draw.line(self.screen, COLOR_INTERACT, (px + pw//2, py), (px + pw//2 + 10, py), 2)
         
-        # Draw interaction zone with dashed border
-        pygame.draw.rect(self.screen, COLOR_INTERACT, 
+        # Interaction zone
+        pygame.draw.rect(self.screen, COLOR_INTERACT,
                         (interact_x - tile_size//2, interact_y - tile_size//2, tile_size, tile_size), 2)
         
-        # === STATUS INDICATORS ===
-        # Battle indicator
-        if mem_state.battle.in_battle:
-            battle_text = self.font_small.render("⚔️ BATTLE", True, (255, 100, 100))
-            self.screen.blit(battle_text, (display_x + 5, display_y + 5))
-        
-        # Menu/dialog indicator
-        if mem_state.menu.text_active:
-            dialog_text = self.font_small.render("💬 DIALOG", True, (100, 255, 100))
-            self.screen.blit(dialog_text, (display_x + 5, display_y + 20))
-        
-        # Position readout
+        # Position
         pos = mem_state.player_position
-        pos_text = self.font_small.render(f"({pos.x},{pos.y})", True, COLOR_PLAYER)
-        self.screen.blit(pos_text, (px - 15, py + ph//2 + 5))
+        pos_text = self.font_small.render(f"({pos.x},{pos.y}) {pos.facing}", True, (200, 200, 200))
+        self.screen.blit(pos_text, (dx + 5, dy + 22))
     
     def _draw_debug_panel(self):
         """Draw the debug information panel."""
