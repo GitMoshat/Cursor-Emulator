@@ -79,7 +79,7 @@ class EmulatorGUI:
         self.tiles_surface = pygame.Surface((128, 192))
         
         # Frame skip for performance
-        self.frame_skip = 2  # 0 = no skip, 1 = skip every other, 2 = skip 2 of 3
+        self.frame_skip = 0  # 0 = no skip (normal), 2 = skip 2 of 3 (turbo)
         self.frame_counter = 0
         self.turbo_mode = False  # Default OFF for normal speed
         
