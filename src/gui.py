@@ -548,6 +548,33 @@ class EmulatorGUI:
         screen_type = mem_state.menu.screen_type
         selection_y = mem_state.menu.selection_y_pixel
         
+        # ALWAYS draw dialog box when text is active (highest priority)
+        if mem_state.menu.text_active:
+            # Dialog box is at bottom of screen (roughly bottom 1/3)
+            # Pokemon games: dialog at Y=96-144 (48 pixels tall)
+            box_x = dx + int(4 * sx)
+            box_y = dy + int(96 * sy)
+            box_w = int(152 * sx)  # Almost full width with small margin
+            box_h = int(46 * sy)   # Bottom portion
+            
+            # Draw thick red border around dialog
+            pygame.draw.rect(self.screen, COLOR_FOCUS, (box_x, box_y, box_w, box_h), 4)
+            
+            # "Press A" indicator arrow at bottom right
+            arrow_x = box_x + box_w - int(16 * sx)
+            arrow_y = box_y + box_h - int(12 * sy)
+            if pulse:
+                pygame.draw.polygon(self.screen, COLOR_ARROW, [
+                    (arrow_x, arrow_y),
+                    (arrow_x + int(10 * sx), arrow_y),
+                    (arrow_x + int(5 * sx), arrow_y + int(8 * sy))
+                ])
+            
+            # Label
+            dialog_label = self.font_small.render("DIALOG - Press A", True, COLOR_ARROW)
+            self.screen.blit(dialog_label, (dx + 5, dy + 22))
+            return  # Don't draw other overlays when dialog is active
+        
         # Screen type label
         type_label = self.font_small.render(f"[{screen_type.upper()}]", True, (200, 150, 150))
         self.screen.blit(type_label, (dx + self.game_width - 100, dy + 22))
@@ -631,20 +658,6 @@ class EmulatorGUI:
             # Grid position label
             pos_text = self.font_small.render(f"Grid: ({grid_x},{grid_y_pos})", True, COLOR_ARROW)
             self.screen.blit(pos_text, (dx + 5, dy + 36))
-        
-        elif screen_type == "dialog":
-            # Dialog box - highlight the text area
-            text_box_y = dy + int(96 * sy)
-            text_box_h = int(48 * sy)
-            pygame.draw.rect(self.screen, COLOR_BOX, 
-                            (dx + 4, text_box_y, self.game_width - 8, text_box_h), 2)
-            
-            # "Press A" indicator if text is waiting
-            pygame.draw.polygon(self.screen, COLOR_ARROW, [
-                (dx + self.game_width - 20, text_box_y + text_box_h - 8),
-                (dx + self.game_width - 12, text_box_y + text_box_h - 16),
-                (dx + self.game_width - 28, text_box_y + text_box_h - 16)
-            ])
         
         else:
             # Generic menu - use calculated Y position
