@@ -617,6 +617,9 @@ Which action best helps achieve the goal? Reply with ONLY the action name."""
         state = self.memory_manager.get_state()
         situation = self._analyze_situation(state)
         
+        # Log detailed perception of the state
+        self._log_perception(state, situation)
+        
         # Check goal progress
         goal = self.goal_system.get_current_goal()
         if goal:
@@ -642,8 +645,11 @@ Which action best helps achieve the goal? Reply with ONLY the action name."""
                 self._log(f"Progress: {int(check.progress * 100)}% - {check.reason}")
         
         if situation != self.last_situation:
-            self._log(f"Situation: {situation}")
+            self._log(f"Situation changed: {self.last_situation} → {situation}")
             self.last_situation = situation
+        
+        # Log thinking about what action to take
+        self._log_thinking_process(state, situation, goal)
         
         # Get action - use goal hints + situation
         action_name = None
@@ -651,14 +657,17 @@ Which action best helps achieve the goal? Reply with ONLY the action name."""
         # Try LLM with goal context
         if self.llm_connected:
             action_name = self._get_llm_action_with_goal(state, situation, goal)
+            if action_name:
+                self._log(f"LLM chose: {action_name}")
         
         # Fallback to goal-aware heuristics
         if not action_name:
             action_name = self._get_goal_heuristic_action(situation, goal)
+            self._log(f"Heuristic chose: {action_name}")
         
         # Execute action through toolkit
         result = self.toolkit.execute_action(action_name)
-        self._log(f"{action_name}: {result.message}")
+        self._log(f"→ {action_name}: {result.message}")
         
         self.current_result = result
         self.hold_remaining = result.hold_frames - 1
@@ -668,6 +677,75 @@ Which action best helps achieve the goal? Reply with ONLY the action name."""
             hold_frames=result.hold_frames,
             reasoning=f"{action_name}: {result.message}"
         )
+    
+    def _log_perception(self, state, situation: str):
+        """Log what the agent perceives from game state."""
+        # Only log perception changes to reduce spam
+        perception_key = f"{situation}_{state.menu.screen_type}_{state.menu.cursor_position}"
+        
+        if hasattr(self, '_last_perception') and self._last_perception == perception_key:
+            return
+        self._last_perception = perception_key
+        
+        self._log(f"─── PERCEIVING ───")
+        self._log(f"Screen: {state.menu.screen_type or situation}")
+        
+        if state.menu.in_menu or state.menu.text_active:
+            self._log(f"Menu cursor: pos={state.menu.cursor_position} xy=({state.menu.cursor_x},{state.menu.cursor_y})")
+            if state.menu.screen_type == "gender_select":
+                opt = "BOY" if state.menu.cursor_position == 0 else "GIRL"
+                self._log(f"Selected: {opt}")
+            elif state.menu.screen_type == "option_menu":
+                opt = "YES/First" if state.menu.cursor_position == 0 else "NO/Second"
+                self._log(f"Selected: {opt}")
+        
+        if state.battle.in_battle:
+            self._log(f"Battle vs {state.battle.enemy_name} Lv{state.battle.enemy_level}")
+            self._log(f"Battle menu: {['FIGHT','PKMN','ITEM','RUN'][state.battle.menu_state] if state.battle.menu_state < 4 else '?'}")
+        
+        if situation == "overworld":
+            self._log(f"Position: ({state.player_position.x},{state.player_position.y})")
+            self._log(f"Facing: {state.player_position.facing}")
+            self._log(f"Map: {state.player_position.map_name}")
+    
+    def _log_thinking_process(self, state, situation: str, goal):
+        """Log the agent's thinking about what to do."""
+        self._log(f"─── THINKING ───")
+        
+        if goal:
+            self._log(f"Goal: {goal.name}")
+        
+        # Explain reasoning based on situation
+        if situation == "title":
+            self._log("I see the title screen. Need to press START to begin.")
+        
+        elif situation == "dialog":
+            self._log("Text on screen. I should advance it with A button.")
+        
+        elif situation == "menu":
+            screen = state.menu.screen_type
+            if screen == "gender_select":
+                self._log(f"Gender selection! Cursor at option {state.menu.cursor_position}")
+                self._log("I'll select the current option with A.")
+            elif screen == "option_menu":
+                self._log(f"Yes/No menu. Cursor at option {state.menu.cursor_position}")
+            elif screen == "name_entry":
+                self._log(f"Name entry screen. Cursor at position {state.menu.cursor_position}")
+            else:
+                self._log(f"In a menu (type: {screen}). Cursor at {state.menu.cursor_position}")
+        
+        elif situation == "battle":
+            menu_opts = ["FIGHT", "PKMN", "ITEM", "RUN"]
+            sel = menu_opts[state.battle.menu_state] if state.battle.menu_state < 4 else "?"
+            self._log(f"In battle! Selected: {sel}")
+            self._log(f"Enemy: {state.battle.enemy_name}")
+        
+        elif situation == "overworld":
+            self._log(f"Exploring {state.player_position.map_name}")
+            if goal and goal.id == "find_professor":
+                self._log("Looking for the Professor. Will explore and interact with NPCs.")
+            elif goal and goal.id == "leave_house":
+                self._log("Need to find the exit. Usually down from starting position.")
     
     def get_thinking_output(self) -> List[str]:
         return self.thinking_history.copy()
