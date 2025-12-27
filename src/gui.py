@@ -177,11 +177,11 @@ class EmulatorGUI:
             self.agent_thinking_log.append("[Stopped] Agent disabled")
         else:
             if not self.agent_manager.agent:
-                # Create default agent (Guided for Pokemon games)
-                agent = self.agent_manager.create_agent('guided')
+                # Create default agent (Memory-based for fast, accurate play)
+                agent = self.agent_manager.create_agent('memory')
                 if agent:
                     self.agent_manager.set_agent(agent)
-                    self.agent_thinking_log.append("[Init] Created GuidedOllama agent")
+                    self.agent_thinking_log.append("[Init] Created MemoryAgent (fast, no vision needed)")
             
             if self.agent_manager.start():
                 self.agent_enabled = True
@@ -481,12 +481,12 @@ class EmulatorGUI:
         self.screen.blit(self.tiles_surface, (x, y))
     
     def _draw_thinking_panel(self):
-        """Draw the AI thinking/reasoning panel."""
+        """Draw the AI thinking/reasoning panel with memory state."""
         # Position below game display
         x = 10
         y = self.game_height + 50
-        panel_width = self.game_width
-        panel_height = 140
+        panel_width = self.game_width + 200  # Wider for memory info
+        panel_height = 160
         
         # Background
         pygame.draw.rect(self.screen, self.PANEL_BG, 
@@ -496,47 +496,93 @@ class EmulatorGUI:
         
         # Title with stage info
         stage_info = ""
+        memory_info = ""
         if self.agent_manager and self.agent_manager.agent:
             if hasattr(self.agent_manager.agent, 'get_current_stage_info'):
                 info = self.agent_manager.agent.get_current_stage_info()
                 stage_info = f" - {info.get('name', '?')}"
+            
+            # Get memory state if available
+            if hasattr(self.agent_manager.agent, 'get_memory_state'):
+                mem_state = self.agent_manager.agent.get_memory_state()
+                if mem_state:
+                    pos = mem_state.player_position
+                    memory_info = f" | Pos:({pos.x},{pos.y}) Map:{pos.map_name[:15]}"
+                    if mem_state.battle.in_battle:
+                        memory_info += " [BATTLE]"
         
         title_color = (100, 200, 100) if self.agent_enabled else self.HIGHLIGHT_COLOR
-        title = self.font_title.render(f"🤖 AI Thinking{stage_info}", True, title_color)
+        title = self.font_title.render(f"🤖 AI{stage_info}{memory_info}", True, title_color)
         self.screen.blit(title, (x, y))
-        y += 22
+        y += 20
+        
+        # Draw memory state summary if available
+        if self.agent_manager and self.agent_manager.agent and hasattr(self.agent_manager.agent, 'get_memory_state'):
+            mem_state = self.agent_manager.agent.get_memory_state()
+            if mem_state:
+                # Party info
+                if mem_state.party:
+                    party_str = " | ".join(
+                        f"{p.species_name[:8]}:{p.current_hp}/{p.max_hp}"
+                        for p in mem_state.party[:3]
+                    )
+                    party_text = self.font_small.render(f"Party: {party_str}", True, (150, 200, 150))
+                    self.screen.blit(party_text, (x, y))
+                    y += 14
+                
+                # Status line
+                status_parts = []
+                if mem_state.badges > 0:
+                    status_parts.append(f"Badges:{mem_state.badges}")
+                if mem_state.money > 0:
+                    status_parts.append(f"${mem_state.money}")
+                if not mem_state.has_starter:
+                    status_parts.append("NO STARTER")
+                if mem_state.battle.in_battle:
+                    b = mem_state.battle
+                    status_parts.append(f"vs {b.enemy_name} Lv{b.enemy_level}")
+                
+                if status_parts:
+                    status_text = self.font_small.render(" | ".join(status_parts), True, (200, 200, 150))
+                    self.screen.blit(status_text, (x, y))
+                    y += 14
         
         # Draw goal if available
         if self.agent_manager and self.agent_manager.agent:
             if hasattr(self.agent_manager.agent, 'get_current_stage_info'):
                 info = self.agent_manager.agent.get_current_stage_info()
-                goal = info.get('goal', '')[:60]
+                goal = info.get('goal', '')[:70]
                 goal_text = self.font_small.render(f"Goal: {goal}", True, (180, 180, 100))
                 self.screen.blit(goal_text, (x, y))
-                y += 16
+                y += 14
+        
+        # Divider
+        y += 2
         
         # Draw thinking log
         if self.agent_thinking_log:
             recent = self.agent_thinking_log[-self.max_thinking_display:]
             for line in recent:
                 # Truncate long lines
-                display_line = line[-70:] if len(line) > 70 else line
+                display_line = line[-80:] if len(line) > 80 else line
                 
                 # Color code based on content
                 if '✓' in line or 'success' in line.lower():
                     color = (100, 200, 100)
                 elif '✗' in line or 'fail' in line.lower() or 'error' in line.lower():
                     color = (200, 100, 100)
-                elif 'Goal:' in line or 'Stage:' in line:
+                elif 'Goal:' in line or 'Stage:' in line or 'Rule:' in line:
                     color = (200, 200, 100)
+                elif 'LLM' in line:
+                    color = (150, 150, 250)
                 else:
                     color = self.TEXT_COLOR
                 
                 text = self.font_small.render(display_line, True, color)
                 self.screen.blit(text, (x, y))
-                y += 14
+                y += 13
         else:
-            no_log = self.font_small.render("Press F2 to start AI agent", True, (120, 120, 120))
+            no_log = self.font_small.render("Press F2 to start AI agent (memory-based, no vision needed)", True, (120, 120, 120))
             self.screen.blit(no_log, (x, y))
     
     def _draw_help(self):

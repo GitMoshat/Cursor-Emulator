@@ -76,8 +76,10 @@ class AgentManager:
         from .ollama_agent import OllamaAgent, OllamaAgentSimple
         from .stub_agent import StubAgent, RandomAgent, ScriptedAgent
         from .guided_agent import GuidedOllamaAgent
+        from .memory_agent import MemoryAgent
         
-        self._agent_types['guided'] = GuidedOllamaAgent  # Default - best for Pokemon
+        self._agent_types['memory'] = MemoryAgent  # Default - fast, uses memory
+        self._agent_types['guided'] = GuidedOllamaAgent  # Vision-based
         self._agent_types['ollama'] = OllamaAgent
         self._agent_types['ollama_simple'] = OllamaAgentSimple
         self._agent_types['stub'] = StubAgent
@@ -119,6 +121,9 @@ class AgentManager:
         if self.running:
             print("Agent already running")
             return False
+        
+        # Always pass emulator reference to agent
+        init_kwargs['emulator'] = self.emulator
         
         # Initialize agent
         if not self.agent.initialize(**init_kwargs):
