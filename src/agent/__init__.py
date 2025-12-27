@@ -7,6 +7,8 @@ from .guided_agent import GuidedOllamaAgent
 from .memory_agent import MemoryAgent
 from .memory_manager import MemoryManager
 from .game_stages import StageManager, GameStage, POKEMON_STAGES
+from .smart_agent import SmartAgent
+from .action_toolkit import ActionToolkit, ToolkitAgent
 
 __all__ = [
     'AgentInterface',
@@ -16,6 +18,9 @@ __all__ = [
     'OllamaAgent',
     'GuidedOllamaAgent',
     'MemoryAgent',
+    'SmartAgent',
+    'ActionToolkit',
+    'ToolkitAgent',
     'MemoryManager',
     'StubAgent',
     'RandomAgent',

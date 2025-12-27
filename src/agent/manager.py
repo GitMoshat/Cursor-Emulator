@@ -81,8 +81,12 @@ class AgentManager:
         from .stub_agent import StubAgent, RandomAgent, ScriptedAgent
         from .guided_agent import GuidedOllamaAgent
         from .memory_agent import MemoryAgent
+        from .smart_agent import SmartAgent
+        from .action_toolkit import ToolkitAgent
         
-        self._agent_types['memory'] = MemoryAgent  # Default - fast, uses memory
+        self._agent_types['toolkit'] = ToolkitAgent  # Default - uses action toolkit
+        self._agent_types['smart'] = SmartAgent  # Smart heuristics + LLM
+        self._agent_types['memory'] = MemoryAgent  # Rule-based
         self._agent_types['guided'] = GuidedOllamaAgent  # Vision-based
         self._agent_types['ollama'] = OllamaAgent
         self._agent_types['ollama_simple'] = OllamaAgentSimple

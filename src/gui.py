@@ -208,11 +208,11 @@ class EmulatorGUI:
             self.agent_thinking_log.append("[Stopped] Agent disabled")
         else:
             if not self.agent_manager.agent:
-                # Create default agent (Memory-based for fast, accurate play)
-                agent = self.agent_manager.create_agent('memory')
+                # Create default agent (Toolkit-based - discovers and requests actions)
+                agent = self.agent_manager.create_agent('toolkit')
                 if agent:
                     self.agent_manager.set_agent(agent)
-                    self.agent_thinking_log.append("[Init] Created MemoryAgent (fast, no vision needed)")
+                    self.agent_thinking_log.append("[Init] Created ToolkitAgent (action-based AI)")
             
             if self.agent_manager.start():
                 self.agent_enabled = True
