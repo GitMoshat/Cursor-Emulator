@@ -61,7 +61,12 @@ def main():
     print("  V           - Toggle VRAM Bank (GBC)")
     print("  N           - Step (when paused)")
     print("  TAB         - Turbo Mode (fast forward)")
+    print("  F2          - Toggle AI Agent")
+    print("  F3          - Cycle AI Agent Type")
     print("  ESC         - Quit")
+    print()
+    print("AI Agents: Ollama (vision), Random, Scripted")
+    print("  Requires Ollama running locally with a vision model (llava)")
     print()
     print("=" * 60)
     

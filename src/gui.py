@@ -1,12 +1,19 @@
 """
 Game Boy Color Emulator GUI
-Full-featured interface with game display, tilemap viewer, and debug tools.
+Full-featured interface with game display, tilemap viewer, debug tools, and AI agent controls.
 """
 
 import pygame
 import numpy as np
 from typing import Optional
 import sys
+
+# Try to import agent system
+try:
+    from .agent import AgentManager, AgentConfig
+    AGENT_AVAILABLE = True
+except ImportError:
+    AGENT_AVAILABLE = False
 
 
 class EmulatorGUI:
@@ -75,6 +82,13 @@ class EmulatorGUI:
         self.frame_counter = 0
         self.turbo_mode = False
         
+        # AI Agent system
+        self.agent_manager = None
+        self.agent_enabled = False
+        self.agent_status_text = "AI: Not loaded"
+        if AGENT_AVAILABLE:
+            self.agent_manager = AgentManager(emulator)
+        
         # State
         self.running = True
         self.show_tilemap = True
@@ -112,6 +126,12 @@ class EmulatorGUI:
                 
                 for i in range(frames_to_run):
                     frame = self.emulator.run_frame()
+                    
+                    # Let AI agent process frame
+                    if self.agent_manager and self.agent_enabled:
+                        action = self.agent_manager.process_frame(frame)
+                        if action and action.reasoning:
+                            self.agent_status_text = f"AI: {action.reasoning[:40]}"
                 
                 # Only update display on last frame
                 self._update_game_surface(frame)
@@ -130,7 +150,60 @@ class EmulatorGUI:
                 self.fps_samples.pop(0)
                 self.last_fps = sum(self.fps_samples) / len(self.fps_samples)
         
+        # Cleanup
+        if self.agent_manager:
+            self.agent_manager.stop()
         pygame.quit()
+    
+    def _toggle_agent(self):
+        """Toggle AI agent on/off."""
+        if not self.agent_manager:
+            self.agent_status_text = "AI: Not available"
+            return
+        
+        if self.agent_enabled:
+            self.agent_manager.stop()
+            self.agent_enabled = False
+            self.agent_status_text = "AI: Stopped"
+        else:
+            if not self.agent_manager.agent:
+                # Create default agent (Ollama)
+                agent = self.agent_manager.create_agent('ollama')
+                if agent:
+                    self.agent_manager.set_agent(agent)
+            
+            if self.agent_manager.start():
+                self.agent_enabled = True
+                self.agent_status_text = f"AI: {self.agent_manager.agent.name} running"
+            else:
+                self.agent_status_text = "AI: Failed to start"
+    
+    def _cycle_agent(self):
+        """Cycle through available agent types."""
+        if not self.agent_manager:
+            return
+        
+        # Stop current agent
+        if self.agent_enabled:
+            self.agent_manager.stop()
+            self.agent_enabled = False
+        
+        agents = self.agent_manager.get_available_agents()
+        current_name = self.agent_manager.agent.name if self.agent_manager.agent else None
+        
+        # Find current index and get next
+        try:
+            current_idx = next(i for i, a in enumerate(agents) 
+                             if a in (current_name or '').lower())
+            next_idx = (current_idx + 1) % len(agents)
+        except StopIteration:
+            next_idx = 0
+        
+        agent_type = agents[next_idx]
+        agent = self.agent_manager.create_agent(agent_type)
+        if agent:
+            self.agent_manager.set_agent(agent)
+            self.agent_status_text = f"AI: {agent.name} selected (F2 to start)"
     
     def _handle_events(self):
         """Handle input events."""
@@ -162,6 +235,14 @@ class EmulatorGUI:
                 elif event.key == pygame.K_TAB:
                     self.turbo_mode = not self.turbo_mode
                     self.frame_skip = 2 if self.turbo_mode else 0
+                
+                elif event.key == pygame.K_F2:
+                    # Toggle AI agent
+                    self._toggle_agent()
+                
+                elif event.key == pygame.K_F3:
+                    # Cycle through agent types
+                    self._cycle_agent()
                 
                 elif event.key == pygame.K_n and self.emulator.paused:
                     # Step one instruction
@@ -374,10 +455,11 @@ class EmulatorGUI:
         x = 10
         
         turbo_str = "ON" if self.turbo_mode else "OFF"
+        agent_str = "ON" if self.agent_enabled else "OFF"
         help_lines = [
             "Controls: Arrow Keys = D-Pad | Z = A | X = B | Enter = Start | RShift = Select",
-            "Space = Pause | R = Reset | N = Step (paused) | T = Tilemap | V = VRAM Bank | TAB = Turbo",
-            f"Frame: {self.emulator.total_frames} | Mode: {'GBC' if self.emulator.cgb_mode else 'DMG'} | Turbo: {turbo_str}"
+            "Space = Pause | R = Reset | TAB = Turbo | F2 = Toggle AI | F3 = Cycle AI Agent",
+            f"Frame: {self.emulator.total_frames} | Turbo: {turbo_str} | {self.agent_status_text}"
         ]
         
         for line in help_lines:

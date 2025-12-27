@@ -1,4 +1,7 @@
 # GBC Emulator Dependencies
 pygame==2.5.2
 numpy==1.26.2
+numba>=0.58.0
+pillow>=10.0.0
+requests>=2.31.0
 
