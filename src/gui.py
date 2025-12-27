@@ -150,6 +150,7 @@ class EmulatorGUI:
         # FPS tracking
         self.fps_samples = []
         self.last_fps = 0
+        self._frame_count = 0
     
     def run(self):
         """Main GUI loop."""
@@ -173,35 +174,29 @@ class EmulatorGUI:
                 
                 for i in range(frames_to_run):
                     frame = self.emulator.run_frame()
+                    self._frame_count += 1
                     
-                    # Let AI agent process frame (in turbo, only process every Nth frame)
-                    if self.agent_manager and self.agent_enabled:
-                        # In turbo mode, process AI on first frame of batch only
-                        # This prevents AI from getting overwhelmed
-                        should_process_ai = (not self.turbo_mode) or (i == 0)
-                        
-                        if should_process_ai:
-                            action = self.agent_manager.process_frame(frame, turbo=self.turbo_mode)
-                            if action and action.reasoning:
-                                turbo_str = " [TURBO]" if self.turbo_mode else ""
-                                self.agent_status_text = f"AI{turbo_str}: {action.reasoning[:35]}"
-                        
-                        # Update thinking log from agent
-                        if self.agent_manager.agent:
-                            if hasattr(self.agent_manager.agent, 'get_thinking_output'):
-                                self.agent_thinking_log = self.agent_manager.agent.get_thinking_output()
-                            elif hasattr(self.agent_manager.agent, 'thinking_history'):
-                                self.agent_thinking_log = self.agent_manager.agent.thinking_history
-                            
-                            # Check for goal completion (find_professor is target)
-                            if hasattr(self.agent_manager.agent, 'goal_system'):
-                                goal = self.agent_manager.agent.goal_system.get_current_goal()
-                                if goal and goal.id == "get_starter":
-                                    # Reached final goal - attempt successful!
-                                    self._handle_attempt_complete(True)
+                    # Let AI agent process frame (in turbo, only process first frame)
+                    if self.agent_manager and self.agent_enabled and i == 0:
+                        action = self.agent_manager.process_frame(frame, turbo=self.turbo_mode)
+                        if action and action.reasoning:
+                            turbo_str = " [TURBO]" if self.turbo_mode else ""
+                            self.agent_status_text = f"AI{turbo_str}: {action.reasoning[:35]}"
                 
                 # Only update display on last frame
                 self._update_game_surface(frame)
+                
+                # Update thinking log ONCE per batch (not every frame) - perf optimization
+                if self.agent_manager and self.agent_manager.agent:
+                    agent = self.agent_manager.agent
+                    if hasattr(agent, 'thinking_history'):
+                        self.agent_thinking_log = agent.thinking_history  # Direct ref, no copy
+                    
+                    # Check goal completion occasionally
+                    if hasattr(agent, 'goal_system') and self._frame_count % 30 == 0:
+                        goal = agent.goal_system.get_current_goal()
+                        if goal and goal.id == "get_starter":
+                            self._handle_attempt_complete(True)
             
             self._draw()
             

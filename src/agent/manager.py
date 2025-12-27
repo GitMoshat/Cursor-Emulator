@@ -175,42 +175,58 @@ class AgentManager:
         # In turbo mode, action holds are shorter (game runs faster)
         hold_decrement = self.turbo_multiplier if turbo else 1
         
-        # Handle current action hold
+        # Handle current action hold - fast path, no processing needed
         if self.action_frames_remaining > 0:
             self.action_frames_remaining -= hold_decrement
             if self.action_frames_remaining <= 0:
-                # Release held buttons
                 self._release_action_buttons()
                 self.action_frames_remaining = 0
             return None
         
-        # Update frame history
-        self.frame_history.append(frame.copy())
-        if len(self.frame_history) > self.max_frame_history:
-            self.frame_history.pop(0)
+        # Skip frame history in turbo mode to save memory bandwidth
+        if not turbo and len(self.frame_history) < self.max_frame_history:
+            self.frame_history.append(frame)  # Don't copy, just reference
+            if len(self.frame_history) > self.max_frame_history:
+                self.frame_history.pop(0)
         
-        # Extract game state
-        state = self._extract_game_state(frame)
+        # Create minimal state - ToolkitAgent uses its own MemoryManager
+        # Only extract what's actually needed by the agent interface
+        state = self._extract_minimal_state(frame)
         
         # Get agent decision
         start_time = time.time()
         action = self.agent.process_frame(state)
         decision_time = (time.time() - start_time) * 1000
         
-        self._decision_times.append(decision_time)
-        if len(self._decision_times) > 100:
-            self._decision_times.pop(0)
-        self.stats['avg_decision_time_ms'] = sum(self._decision_times) / len(self._decision_times)
+        # Only track timing occasionally to reduce overhead
+        if self.stats['frames_processed'] % 10 == 0:
+            self._decision_times.append(decision_time)
+            if len(self._decision_times) > 50:
+                self._decision_times.pop(0)
+            self.stats['avg_decision_time_ms'] = sum(self._decision_times) / len(self._decision_times)
         
         if action and action.buttons_to_press:
             self.stats['actions_taken'] += 1
             self._execute_action(action)
             self.current_action = action
-            # In turbo mode, multiply hold frames so effective duration stays similar
             effective_hold = action.hold_frames * (self.turbo_multiplier if turbo else 1)
             self.action_frames_remaining = effective_hold - hold_decrement
         
         return action
+    
+    def _extract_minimal_state(self, frame: np.ndarray) -> GameState:
+        """Extract minimal state - agents with MemoryManager don't need full extraction."""
+        memory = self.emulator.memory
+        # Just return frame reference and minimal info - no heavy copies
+        return GameState(
+            frame=frame,
+            frame_number=self.stats['frames_processed'],
+            wram=np.zeros(1, dtype=np.uint8),  # Placeholder - agent uses MemoryManager
+            hram=np.zeros(1, dtype=np.uint8),
+            oam=np.zeros(1, dtype=np.uint8),
+            sprites=[],
+            buttons_pressed=[],
+        )
     
     def _extract_game_state(self, frame: np.ndarray) -> GameState:
         """Extract complete game state from emulator."""

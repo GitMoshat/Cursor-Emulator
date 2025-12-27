@@ -437,7 +437,7 @@ class ToolkitAgent:
         
         self.name = "ToolkitAgent"
         self.enabled = False
-        self.frame_skip = 6
+        self.frame_skip = 15  # Increased for better FPS - decide every 15 frames
         self._frame_counter = 0
         self.config = config or AgentConfig()
         
@@ -539,55 +539,41 @@ class ToolkitAgent:
         return (0, 0)
     
     def _get_name_entry_action(self, state) -> str:
-        """Get next action for name entry state machine."""
-        import random
+        """Get next action for name entry state machine.
         
-        name_entry = state.name_entry
+        Pokemon Crystal has preset names - just navigate down and press A
+        to select one of the default names (like GOLD, SILVER, etc.)
+        """
         current_x = state.menu.cursor_x
         current_y = state.menu.cursor_y
         
-        # Start name entry if not active
-        if not self.name_entry_active:
-            self.name_to_enter = self._generate_random_name()
-            self.name_char_index = 0
-            self.name_entry_active = True
-            self.name_entry_step = "navigating"
-            self._log(f"NAME ENTRY: Will enter '{self.name_to_enter}'")
-            # Get position of first character
-            self.target_grid_x, self.target_grid_y = self._get_char_grid_position(self.name_to_enter[0])
+        # Track how many times we've tried to confirm
+        if not hasattr(self, '_name_confirm_count'):
+            self._name_confirm_count = 0
         
-        # Check if done entering all characters
-        if self.name_char_index >= len(self.name_to_enter):
-            # Navigate to END button and confirm
-            self.name_entry_step = "confirming"
-            # END is at bottom row, right side (around x=7-9, y=4)
-            if current_y < 4:
-                return "name_grid_down"
-            if current_x < 7:
+        # In Pokemon Crystal, there are preset names at the bottom of the name screen
+        # Strategy: Navigate down to preset names and select one
+        
+        # If cursor is in the character grid (y < 4), move down to preset names
+        if current_y < 4:
+            self._log(f"NAME ENTRY: Moving to preset names (y={current_y})")
+            return "name_grid_down"
+        
+        # At bottom row - look for preset names or END
+        # Preset names are usually on the left side, END is on the right
+        # Just press A to select whatever we're on
+        self._name_confirm_count += 1
+        
+        if self._name_confirm_count > 10:
+            # Stuck - try navigating right to END and confirm
+            self._log("NAME ENTRY: Stuck, going to END")
+            if current_x < 8:
                 return "name_grid_right"
-            # At END position, confirm
-            self._log("NAME ENTRY: Confirming name")
-            self.name_entry_active = False
+            self._name_confirm_count = 0
             return "name_confirm"
         
-        # Get target position for current character
-        target_char = self.name_to_enter[self.name_char_index]
-        self.target_grid_x, self.target_grid_y = self._get_char_grid_position(target_char)
-        
-        # Navigate to target position
-        if current_y < self.target_grid_y:
-            return "name_grid_down"
-        elif current_y > self.target_grid_y:
-            return "menu_up"  # Use menu_up for grid up
-        elif current_x < self.target_grid_x:
-            return "name_grid_right"
-        elif current_x > self.target_grid_x:
-            return "name_grid_left"
-        else:
-            # At correct position - select character
-            self._log(f"NAME ENTRY: Selecting '{target_char}' ({self.name_char_index + 1}/{len(self.name_to_enter)})")
-            self.name_char_index += 1
-            return "name_select_char"
+        self._log(f"NAME ENTRY: Selecting preset at ({current_x}, {current_y})")
+        return "select_option"  # Press A to select preset name
     
     def initialize(self, **kwargs) -> bool:
         from .memory_manager import MemoryManager
@@ -689,6 +675,8 @@ Which action should I take? Respond with just the action name."""
     
     def _get_heuristic_action(self, situation: str, state=None) -> str:
         """Get action using simple heuristics."""
+        import random
+        
         if situation == "title":
             return "start_game"
         elif situation == "dialog":
@@ -697,66 +685,98 @@ Which action should I take? Respond with just the action name."""
             # Use name entry state machine
             if state:
                 return self._get_name_entry_action(state)
-            return "enter_name"
+            return "select_option"  # Just press A
         elif situation == "menu":
             return "select_option"
         elif situation == "battle":
             return "battle_fight"
-        else:  # overworld
-            import random
-            if random.random() < 0.3:
-                return "interact"
-            return "explore"
+        elif situation == "overworld":
+            # Actually explore! Mostly move, occasionally interact
+            roll = random.random()
+            if roll < 0.15:
+                return "interact"  # 15% interact
+            elif roll < 0.35:
+                return "move_up"   # 20% up
+            elif roll < 0.55:
+                return "move_down" # 20% down
+            elif roll < 0.75:
+                return "move_left" # 20% left
+            else:
+                return "move_right" # 25% right
+        else:
+            # Unknown - try to advance
+            return "advance_dialog"
     
     def _get_goal_heuristic_action(self, situation: str, goal, state=None) -> str:
         """Get action based on current goal and situation."""
         import random
         
-        # Handle name entry with state machine - always use it regardless of goal
-        if situation == "name_entry" and state:
-            return self._get_name_entry_action(state)
+        # Handle name entry - just select preset name
+        if situation == "name_entry":
+            if state:
+                return self._get_name_entry_action(state)
+            return "select_option"  # Press A
         
-        if not goal:
-            return self._get_heuristic_action(situation, state)
-        
-        goal_id = goal.id
-        
-        # Goal-specific logic
-        if goal_id == "start_game":
-            if situation == "title":
-                return "start_game"
+        # Handle dialog - always advance
+        if situation == "dialog":
             return "advance_dialog"
         
-        elif goal_id == "complete_intro":
-            if situation == "dialog":
-                return "advance_dialog"
-            elif situation == "menu":
-                return "select_option"
-            return "advance_dialog"  # Keep pressing through intro
+        # Handle menu - usually select
+        if situation == "menu":
+            return "select_option"
         
-        elif goal_id == "leave_house":
-            if situation == "dialog":
-                return "advance_dialog"
-            # Try to find exit - usually down
-            directions = ["move_down", "move_down", "move_left", "move_right", "interact"]
-            return random.choice(directions)
+        # Handle battle
+        if situation == "battle":
+            return "battle_fight"
         
-        elif goal_id == "find_professor":
-            if situation == "dialog":
-                return "advance_dialog"
-            # Explore and interact with buildings/NPCs
-            actions = ["explore", "interact", "move_up", "interact"]
-            return random.choice(actions)
+        # Handle title
+        if situation == "title":
+            return "start_game"
         
-        elif goal_id == "get_starter":
-            if situation == "dialog":
-                return "advance_dialog"
-            elif situation == "menu":
-                return "select_option"
-            # Interact with Pokeballs
-            return "interact"
+        # Handle overworld - the main exploration
+        if situation == "overworld":
+            if not goal:
+                return self._get_heuristic_action(situation, state)
+            
+            goal_id = goal.id
+            
+            if goal_id == "leave_house":
+                # Mostly move down to find exit
+                roll = random.random()
+                if roll < 0.5:
+                    return "move_down"
+                elif roll < 0.7:
+                    return "move_left"
+                elif roll < 0.9:
+                    return "move_right"
+                else:
+                    return "interact"
+            
+            elif goal_id == "find_professor":
+                # Explore all directions, interact with NPCs
+                roll = random.random()
+                if roll < 0.2:
+                    return "interact"
+                elif roll < 0.4:
+                    return "move_up"
+                elif roll < 0.6:
+                    return "move_down"
+                elif roll < 0.8:
+                    return "move_left"
+                else:
+                    return "move_right"
+            
+            elif goal_id == "get_starter":
+                # Interact with everything
+                if random.random() < 0.4:
+                    return "interact"
+                return "explore"
+            
+            else:
+                # Generic exploration
+                return self._get_heuristic_action(situation, state)
         
-        # Default to situation-based
+        # Default
         return self._get_heuristic_action(situation, state)
     
     def _start_async_llm_call(self, state, situation: str, goal):
