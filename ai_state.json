@@ -1,5 +1,5 @@
 {
-  "frame": 30,
+  "frame": 1260,
   "situation": "name_entry",
   "screen_type": "name_entry",
   "goal": {
@@ -17,12 +17,12 @@
     "party_count": 0
   },
   "menu": {
-    "in_menu": true,
+    "in_menu": false,
     "text_active": false,
     "cursor": [
-      2,
-      1
+      8,
+      15
     ]
   },
-  "last_action": "Starting game"
+  "last_action": "Grid right"
 }

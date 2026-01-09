@@ -539,60 +539,80 @@ class ToolkitAgent:
         # Default to A if character not found
         return (0, 0)
     
-    def _get_name_entry_action(self, state) -> str:
-        """Get next action for name entry state machine.
+    def _get_smart_menu_action(self, state) -> str:
+        """Smart menu/dialog handling - adaptive, not hardcoded.
         
-        Pokemon Crystal name entry: Try multiple approaches:
-        1. Press START to bring up preset names menu
-        2. If that doesn't work, press A repeatedly to accept
+        When in a menu or seeing dialog:
+        - If text is showing, usually press A to continue
+        - If making a selection, press A to confirm
+        - Use arrows to navigate if needed
+        """
+        # Track attempts to avoid infinite loops
+        if not hasattr(self, '_menu_attempts'):
+            self._menu_attempts = 0
+        self._menu_attempts += 1
+        
+        # If text/dialog is showing, press A to advance/confirm
+        if state.menu.text_active:
+            return "advance_dialog"
+        
+        # If in a menu, try selecting current option
+        # This handles time selection, gender selection, etc.
+        if state.menu.in_menu:
+            # Every few attempts, try A to select
+            if self._menu_attempts % 3 == 0:
+                return "select_option"
+            # Sometimes try navigating
+            elif self._menu_attempts % 5 == 0:
+                return "menu_down"
+            else:
+                return "advance_dialog"
+        
+        return "advance_dialog"
+    
+    def _get_name_entry_action(self, state) -> str:
+        """Handle name entry - be adaptive.
+        
+        The name entry screen has a character grid.
+        Strategy: Try START for presets, then navigate to END and press A.
         """
         current_x = state.menu.cursor_x
         current_y = state.menu.cursor_y
         current_name = state.player_name
         
-        # Track how many times we've tried
+        # Track attempts
         if not hasattr(self, '_name_entry_attempts'):
             self._name_entry_attempts = 0
-            self._name_entry_phase = 1  # Start with phase 1 (try START)
-            self._log(f"[NAME ENTRY START] cursor: ({current_x}, {current_y}), name: '{current_name}'")
-            self._log(f"[NAME ENTRY] Phase 1: Try pressing START for preset names")
+            self._log(f"[NAME ENTRY] Starting - cursor: ({current_x}, {current_y})")
         
         self._name_entry_attempts += 1
         
         # Check if name changed (success!)
         name_is_placeholder = current_name and all(c == '?' for c in current_name.strip())
         if not name_is_placeholder and len(current_name.strip()) > 0:
-            self._log(f"[NAME ENTRY SUCCESS!] Name is now: '{current_name}'")
+            self._log(f"[NAME ENTRY SUCCESS!] Name: '{current_name}'")
             self._name_entry_attempts = 0
-            self._name_entry_phase = 1
-            return "advance_dialog"  # Move past name entry
+            return "advance_dialog"
         
-        # Log progress every 10 attempts
-        if self._name_entry_attempts % 10 == 0:
-            self._log(f"[NAME ENTRY] Phase {self._name_entry_phase}, Attempt {self._name_entry_attempts}, cursor=({current_x},{current_y})")
+        # Log occasionally
+        if self._name_entry_attempts % 15 == 0:
+            self._log(f"[NAME ENTRY] Attempt {self._name_entry_attempts}, cursor=({current_x},{current_y})")
         
-        # Phase 1: Try pressing START to bring up preset names (first 30 attempts)
-        if self._name_entry_phase == 1:
-            if self._name_entry_attempts > 30:
-                self._log(f"[NAME ENTRY] Phase 1 failed, trying Phase 2: Press A on END")
-                self._name_entry_phase = 2
-                self._name_entry_attempts = 0
-            return "start_game"  # Press START
+        # Simple adaptive strategy:
+        # 1. First try START to get preset names (attempts 1-20)
+        # 2. Then try navigating to END and pressing A (attempts 21+)
         
-        # Phase 2: Navigate DOWN to bottom row, then RIGHT to END, then press A
-        elif self._name_entry_phase == 2:
-            # Alternate between pressing down, right, and A
-            action_cycle = self._name_entry_attempts % 5
-            if action_cycle < 2:
-                return "name_grid_down"  # Press DOWN
-            elif action_cycle < 4:
-                return "name_grid_right"  # Press RIGHT
+        if self._name_entry_attempts <= 20:
+            return "start_game"  # Press START for presets
+        else:
+            # Cycle through: down, right, A
+            cycle = self._name_entry_attempts % 4
+            if cycle == 0:
+                return "name_grid_down"
+            elif cycle == 1:
+                return "name_grid_right"
             else:
                 return "select_option"  # Press A
-        
-        # Phase 3: Just spam A to accept whatever
-        else:
-            return "select_option"
     
     def initialize(self, **kwargs) -> bool:
         from .memory_manager import MemoryManager
@@ -631,31 +651,37 @@ class ToolkitAgent:
         print(f"[ToolkitAgent] {msg}")
     
     def _analyze_situation(self, state) -> str:
-        """Determine current situation."""
-        # Check screen type from memory manager first
+        """Determine current situation - be ADAPTIVE, not hardcoded."""
         screen_type = state.menu.screen_type
         
         # Log screen type changes for debugging
         if not hasattr(self, '_last_screen_type') or self._last_screen_type != screen_type:
             cursor = state.menu
             self._log(f"[SCREEN CHANGE] {self._last_screen_type if hasattr(self, '_last_screen_type') else 'none'} -> {screen_type}")
-            self._log(f"[SCREEN INFO] cursor=({cursor.cursor_x},{cursor.cursor_y}), menu={cursor.in_menu}, text={cursor.text_active}, name='{state.player_name}'")
+            self._log(f"[SCREEN INFO] cursor=({cursor.cursor_x},{cursor.cursor_y}), menu={cursor.in_menu}, text={cursor.text_active}")
             self._last_screen_type = screen_type
         
-        if screen_type == "name_entry":
-            return "name_entry"
+        # Let the LLM handle complex situations - don't over-categorize
+        # Just provide basic context and let intelligence decide
         
         if state.battle.in_battle:
             return "battle"
         
-        # Check for text/dialog
+        # Name entry is special because it has a character grid
+        if screen_type == "name_entry":
+            return "name_entry"
+        
+        # Dialog/text showing - could be a question, could be info
         if state.menu.text_active:
             return "dialog"
         
+        # Menu open - could be many things (time select, options, etc.)
         if state.menu.in_menu:
-            return "menu"
+            return "menu"  # Let LLM figure out what kind of menu
+        
         if not state.game_started and state.party_count == 0:
             return "title"
+        
         return "overworld"
     
     def _get_llm_action(self, state, situation: str) -> Optional[str]:
@@ -738,22 +764,21 @@ Which action should I take? Respond with just the action name."""
             return "advance_dialog"
     
     def _get_goal_heuristic_action(self, situation: str, goal, state=None) -> str:
-        """Get action based on current goal and situation."""
+        """Get action based on situation - ADAPTIVE, let LLM handle complex cases."""
         import random
         
-        # Handle name entry - just select preset name
+        # Name entry has special handling (character grid)
         if situation == "name_entry":
             if state:
                 return self._get_name_entry_action(state)
-            return "select_option"  # Press A
-        
-        # Handle dialog - always advance
-        if situation == "dialog":
-            return "advance_dialog"
-        
-        # Handle menu - usually select
-        if situation == "menu":
             return "select_option"
+        
+        # Dialog and menu - use SMART adaptive handling
+        # This handles time selection, gender selection, confirmations, etc.
+        if situation in ["dialog", "menu"]:
+            if state:
+                return self._get_smart_menu_action(state)
+            return "advance_dialog"  # Default to pressing A
         
         # Handle battle
         if situation == "battle":
@@ -809,6 +834,62 @@ Which action should I take? Respond with just the action name."""
         # Default
         return self._get_heuristic_action(situation, state)
     
+    def _build_game_context(self, state, situation: str) -> str:
+        """Build detailed game context for LLM - what's ACTUALLY on screen."""
+        lines = []
+        
+        # Screen type with explanation
+        screen_explanations = {
+            "title": "Title screen - press START or A to begin",
+            "name_entry": "Name entry screen - character grid to type a name, or select preset",
+            "gender_select": "Gender/option selection - choose BOY or GIRL",
+            "dialog": "Dialog/text box showing - need to press A to continue",
+            "menu": "Menu is open - navigate with arrows, select with A",
+            "battle": "In Pokemon battle - choose FIGHT, POKEMON, ITEM, or RUN",
+            "overworld": "Walking around the game world - can move and interact",
+            "intro": "Introduction sequence - usually need to press A or make choices",
+            "time_select": "Time selection screen - choose what time it is",
+        }
+        
+        # Detect time selection specifically
+        if "time" in str(state.player_name).lower() or situation == "name_entry":
+            # Check if this might be time selection based on context
+            if state.menu.cursor_y > 5 or state.menu.cursor_x > 5:
+                lines.append("SCREEN: Time/option selection - picking from a list")
+            else:
+                lines.append(f"SCREEN: {screen_explanations.get(situation, situation)}")
+        else:
+            lines.append(f"SCREEN: {screen_explanations.get(situation, situation)}")
+        
+        # Menu state details
+        if state.menu.in_menu:
+            lines.append(f"MENU: Open at cursor position ({state.menu.cursor_x}, {state.menu.cursor_y})")
+            if state.menu.options_count > 0:
+                lines.append(f"OPTIONS: {state.menu.options_count} choices available")
+        
+        # Text/dialog active
+        if state.menu.text_active:
+            lines.append("TEXT: Dialog box is showing - press A to continue or make selection")
+        
+        # Player name status
+        if state.player_name:
+            is_placeholder = all(c == '?' for c in state.player_name.strip())
+            if is_placeholder:
+                lines.append("NAME: Not yet entered (showing placeholder)")
+            else:
+                lines.append(f"NAME: '{state.player_name}'")
+        
+        # Location
+        lines.append(f"LOCATION: ({state.player_position.x}, {state.player_position.y}) - {state.player_position.map_name}")
+        
+        # Party status
+        if state.party_count > 0:
+            lines.append(f"PARTY: {state.party_count} Pokemon")
+        else:
+            lines.append("PARTY: No Pokemon yet")
+        
+        return "\n".join(lines)
+    
     def _start_async_llm_call(self, state, situation: str, goal):
         """Start async LLM call in background thread."""
         if self.llm_pending or not self.llm_connected:
@@ -823,26 +904,33 @@ Which action should I take? Respond with just the action name."""
         self.llm_pending = True
         self.llm_result = None
         
-        # Build prompt data
+        # Build DETAILED context about what's on screen
+        game_context = self._build_game_context(state, situation)
+        
+        # Get available actions with descriptions
         available = self.toolkit.get_contextual_actions(situation)
         actions_desc = "\n".join(f"- {a}: {self.toolkit.actions[a].description}" for a in available if a in self.toolkit.actions)
         
         goal_context = ""
         if goal:
-            hints = goal.action_hints[:2] if hasattr(goal, 'action_hints') else []
-            goal_context = f"GOAL: {goal.name} - {goal.description}\nHints: {', '.join(hints)}\n"
+            goal_context = f"CURRENT GOAL: {goal.name}\nObjective: {goal.description}\n"
         
-        prompt = f"""You are playing Pokemon. Choose the best action.
-{goal_context}
-Situation: {situation}
-Location: ({state.player_position.x}, {state.player_position.y}) - {state.player_position.map_name}
-Party: {state.party_count} Pokemon
-Has starter: {state.has_starter}
+        prompt = f"""You are an AI playing Pokemon Crystal. Look at the current game state and choose the BEST action.
 
-Available actions:
+{goal_context}
+=== CURRENT GAME STATE ===
+{game_context}
+
+=== AVAILABLE ACTIONS ===
 {actions_desc}
 
-Which action? Reply with ONLY the action name."""
+IMPORTANT: 
+- If you see a question or selection (like "What time is it?"), use select_option (A) to confirm your choice
+- If you see a text box, use advance_dialog (A) to continue
+- If entering a name, navigate the grid and select characters
+- Think about what the screen is asking you to do
+
+What action should I take? Reply with ONLY the action name, nothing else."""
 
         def llm_worker():
             import requests
