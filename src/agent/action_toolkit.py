@@ -616,6 +616,7 @@ class ToolkitAgent:
     
     def initialize(self, **kwargs) -> bool:
         from .memory_manager import MemoryManager
+        from .screen_reader import ScreenReader
         
         emulator = kwargs.get('emulator')
         if emulator:
@@ -623,6 +624,10 @@ class ToolkitAgent:
             self.memory_manager.detect_game()
             self.toolkit = ActionToolkit(self.memory_manager)
             self._log(f"Toolkit: {len(self.toolkit.actions)} actions available")
+            
+            # Initialize screen reader for actual screen content
+            self.screen_reader = ScreenReader(emulator.memory)
+            self._log("Screen reader initialized - can read actual game text")
         
         # Try LLM
         try:
@@ -651,33 +656,64 @@ class ToolkitAgent:
         print(f"[ToolkitAgent] {msg}")
     
     def _analyze_situation(self, state) -> str:
-        """Determine current situation - be ADAPTIVE, not hardcoded."""
+        """Determine current situation using SCREEN READER for actual content."""
         screen_type = state.menu.screen_type
+        
+        # === USE SCREEN READER TO UNDERSTAND SCREEN ===
+        screen_info = None
+        if hasattr(self, 'screen_reader') and self.screen_reader:
+            try:
+                screen_info = self.screen_reader.read_screen()
+                
+                # Use screen reader's analysis to improve situation detection
+                if screen_info.is_title_screen:
+                    screen_type = "title"
+                elif screen_info.is_name_entry:
+                    screen_type = "name_entry"
+                elif screen_info.is_battle:
+                    screen_type = "battle"
+                elif screen_info.is_dialog_active and screen_info.menu_options:
+                    screen_type = "dialog_with_choices"  # Question being asked
+                elif screen_info.is_dialog_active:
+                    screen_type = "dialog"
+                elif screen_info.is_menu_active:
+                    screen_type = "menu"
+                    
+            except Exception as e:
+                self._log(f"[SCREEN] Error: {e}")
         
         # Log screen type changes for debugging
         if not hasattr(self, '_last_screen_type') or self._last_screen_type != screen_type:
             cursor = state.menu
-            self._log(f"[SCREEN CHANGE] {self._last_screen_type if hasattr(self, '_last_screen_type') else 'none'} -> {screen_type}")
-            self._log(f"[SCREEN INFO] cursor=({cursor.cursor_x},{cursor.cursor_y}), menu={cursor.in_menu}, text={cursor.text_active}")
+            self._log(f"[SCREEN] {screen_type}")
+            if screen_info:
+                self._log(f"[SCREEN] Summary: {screen_info.screen_summary}")
+                if screen_info.menu_options:
+                    opts = [o.text for o in screen_info.menu_options[:4]]
+                    self._log(f"[SCREEN] Options: {', '.join(opts)}")
+                if screen_info.dialog:
+                    self._log(f"[SCREEN] Dialog: {screen_info.dialog[:60]}...")
             self._last_screen_type = screen_type
         
-        # Let the LLM handle complex situations - don't over-categorize
-        # Just provide basic context and let intelligence decide
-        
+        # Battle check from memory (most reliable)
         if state.battle.in_battle:
             return "battle"
         
-        # Name entry is special because it has a character grid
+        # Name entry is special
         if screen_type == "name_entry":
             return "name_entry"
         
-        # Dialog/text showing - could be a question, could be info
-        if state.menu.text_active:
+        # Dialog with choices - needs LLM to understand what's being asked
+        if screen_type == "dialog_with_choices":
+            return "dialog_with_choices"
+        
+        # Dialog/text showing
+        if state.menu.text_active or screen_type == "dialog":
             return "dialog"
         
-        # Menu open - could be many things (time select, options, etc.)
-        if state.menu.in_menu:
-            return "menu"  # Let LLM figure out what kind of menu
+        # Menu open
+        if state.menu.in_menu or screen_type == "menu":
+            return "menu"
         
         if not state.game_started and state.party_count == 0:
             return "title"
@@ -764,21 +800,70 @@ Which action should I take? Respond with just the action name."""
             return "advance_dialog"
     
     def _get_goal_heuristic_action(self, situation: str, goal, state=None) -> str:
-        """Get action based on situation - ADAPTIVE, let LLM handle complex cases."""
+        """Get action based on ACTUAL SCREEN CONTENT, not just situation type."""
         import random
         
-        # Name entry has special handling (character grid)
+        # === USE SCREEN READER FOR INTELLIGENT DECISIONS ===
+        screen_info = None
+        if hasattr(self, 'screen_reader') and self.screen_reader:
+            try:
+                screen_info = self.screen_reader.read_screen()
+            except:
+                pass
+        
+        # === HANDLE BASED ON WHAT'S ACTUALLY ON SCREEN ===
+        
+        # Name entry - navigate character grid
         if situation == "name_entry":
             if state:
                 return self._get_name_entry_action(state)
             return "select_option"
         
-        # Dialog and menu - use SMART adaptive handling
-        # This handles time selection, gender selection, confirmations, etc.
-        if situation in ["dialog", "menu"]:
+        # Dialog with choices - UNDERSTAND what's being asked
+        if situation == "dialog_with_choices":
+            if screen_info and screen_info.menu_options:
+                # We have options - the LLM should ideally choose
+                # For now, select the first/current option (usually default is fine)
+                self._log(f"[CHOICE] Options: {[o.text for o in screen_info.menu_options]}")
+                return "select_option"  # Press A to confirm
+            return "advance_dialog"
+        
+        # Dialog/text - advance it
+        if situation == "dialog":
+            # Check if there's actually text on screen
+            if screen_info and screen_info.dialog:
+                self._log(f"[DIALOG] {screen_info.dialog[:50]}...")
+            return "advance_dialog"  # Press A to continue
+        
+        # Menu - understand what kind
+        if situation == "menu":
+            if screen_info and screen_info.menu_options:
+                opts = [o.text for o in screen_info.menu_options]
+                self._log(f"[MENU] {opts}")
+                
+                # Check for specific menus we can handle intelligently
+                opts_upper = [o.upper() for o in opts]
+                
+                if "NEW GAME" in opts_upper:
+                    # Title menu - start new game
+                    return "select_option"
+                elif "YES" in opts_upper and "NO" in opts_upper:
+                    # Confirmation - usually want to confirm
+                    return "select_option"
+                elif "BOY" in opts_upper and "GIRL" in opts_upper:
+                    # Gender selection - pick BOY
+                    return "select_option"
+                elif any(time in opts_upper for time in ["MORNING", "DAY", "NIGHT"]):
+                    # Time selection - pick current
+                    return "select_option"
+                
+                # Generic menu - select current option
+                return "select_option"
+            
+            # Fallback
             if state:
                 return self._get_smart_menu_action(state)
-            return "advance_dialog"  # Default to pressing A
+            return "advance_dialog"
         
         # Handle battle
         if situation == "battle":
@@ -786,17 +871,25 @@ Which action should I take? Respond with just the action name."""
         
         # Handle title
         if situation == "title":
+            if screen_info and screen_info.is_title_screen:
+                self._log("[TITLE] Press START")
             return "start_game"
         
         # Handle overworld - the main exploration
         if situation == "overworld":
+            # Check if we should interact with something
+            if screen_info and screen_info.background_text.has_content:
+                # There's text in the world - might be a sign or NPC
+                text = screen_info.background_text.clean()
+                if text and len(text) > 5:
+                    self._log(f"[WORLD] Text: {text[:40]}...")
+            
             if not goal:
                 return self._get_heuristic_action(situation, state)
             
             goal_id = goal.id
             
             if goal_id == "leave_house":
-                # Mostly move down to find exit
                 roll = random.random()
                 if roll < 0.5:
                     return "move_down"
@@ -808,7 +901,6 @@ Which action should I take? Respond with just the action name."""
                     return "interact"
             
             elif goal_id == "find_professor":
-                # Explore all directions, interact with NPCs
                 roll = random.random()
                 if roll < 0.2:
                     return "interact"
@@ -822,71 +914,53 @@ Which action should I take? Respond with just the action name."""
                     return "move_right"
             
             elif goal_id == "get_starter":
-                # Interact with everything
                 if random.random() < 0.4:
                     return "interact"
                 return "explore"
             
             else:
-                # Generic exploration
                 return self._get_heuristic_action(situation, state)
         
         # Default
         return self._get_heuristic_action(situation, state)
     
     def _build_game_context(self, state, situation: str) -> str:
-        """Build detailed game context for LLM - what's ACTUALLY on screen."""
+        """Build detailed game context for LLM - READ ACTUAL SCREEN CONTENT."""
         lines = []
         
-        # Screen type with explanation
-        screen_explanations = {
-            "title": "Title screen - press START or A to begin",
-            "name_entry": "Name entry screen - character grid to type a name, or select preset",
-            "gender_select": "Gender/option selection - choose BOY or GIRL",
-            "dialog": "Dialog/text box showing - need to press A to continue",
-            "menu": "Menu is open - navigate with arrows, select with A",
-            "battle": "In Pokemon battle - choose FIGHT, POKEMON, ITEM, or RUN",
-            "overworld": "Walking around the game world - can move and interact",
-            "intro": "Introduction sequence - usually need to press A or make choices",
-            "time_select": "Time selection screen - choose what time it is",
-        }
+        # === READ ACTUAL SCREEN CONTENT ===
+        # This is the key - we read what's ACTUALLY displayed on screen
+        if hasattr(self, 'screen_reader') and self.screen_reader:
+            try:
+                screen_content = self.screen_reader.get_screen_for_llm()
+                if screen_content:
+                    lines.append(screen_content)
+            except Exception as e:
+                lines.append(f"(Screen read error: {e})")
         
-        # Detect time selection specifically
-        if "time" in str(state.player_name).lower() or situation == "name_entry":
-            # Check if this might be time selection based on context
-            if state.menu.cursor_y > 5 or state.menu.cursor_x > 5:
-                lines.append("SCREEN: Time/option selection - picking from a list")
-            else:
-                lines.append(f"SCREEN: {screen_explanations.get(situation, situation)}")
-        else:
-            lines.append(f"SCREEN: {screen_explanations.get(situation, situation)}")
+        # === GAME STATE FROM MEMORY ===
+        lines.append("\n=== GAME STATE ===")
         
-        # Menu state details
+        # Situation context
+        lines.append(f"SITUATION: {situation}")
+        
+        # Menu state details  
         if state.menu.in_menu:
-            lines.append(f"MENU: Open at cursor position ({state.menu.cursor_x}, {state.menu.cursor_y})")
-            if state.menu.options_count > 0:
-                lines.append(f"OPTIONS: {state.menu.options_count} choices available")
+            lines.append(f"MENU ACTIVE: cursor at ({state.menu.cursor_x}, {state.menu.cursor_y})")
         
-        # Text/dialog active
         if state.menu.text_active:
-            lines.append("TEXT: Dialog box is showing - press A to continue or make selection")
+            lines.append("TEXT/DIALOG: Currently showing")
         
-        # Player name status
+        # Player info
         if state.player_name:
             is_placeholder = all(c == '?' for c in state.player_name.strip())
             if is_placeholder:
-                lines.append("NAME: Not yet entered (showing placeholder)")
+                lines.append("PLAYER NAME: Not yet set")
             else:
-                lines.append(f"NAME: '{state.player_name}'")
+                lines.append(f"PLAYER NAME: {state.player_name}")
         
-        # Location
-        lines.append(f"LOCATION: ({state.player_position.x}, {state.player_position.y}) - {state.player_position.map_name}")
-        
-        # Party status
-        if state.party_count > 0:
-            lines.append(f"PARTY: {state.party_count} Pokemon")
-        else:
-            lines.append("PARTY: No Pokemon yet")
+        lines.append(f"LOCATION: ({state.player_position.x}, {state.player_position.y}) {state.player_position.map_name}")
+        lines.append(f"POKEMON: {state.party_count} in party")
         
         return "\n".join(lines)
     

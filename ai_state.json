@@ -1,5 +1,5 @@
 {
-  "frame": 1260,
+  "frame": 150,
   "situation": "name_entry",
   "screen_type": "name_entry",
   "goal": {
@@ -24,5 +24,5 @@
       15
     ]
   },
-  "last_action": "Grid right"
+  "last_action": "Grid down"
 }
