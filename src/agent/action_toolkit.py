@@ -543,37 +543,65 @@ class ToolkitAgent:
         """Get next action for name entry state machine.
         
         Pokemon Crystal name entry: The screen shows a character grid,
-        and we want to press START to use a preset name.
+        and we want to press SELECT to switch to preset names, or just press A on END.
         """
         current_x = state.menu.cursor_x
         current_y = state.menu.cursor_y
+        current_name = state.player_name
         
         # Track how many times we've tried
         if not hasattr(self, '_name_entry_attempts'):
             self._name_entry_attempts = 0
-            self._log(f"[NAME ENTRY] Starting - cursor: ({current_x}, {current_y})")
-            self._log(f"[NAME ENTRY] Memory: in_menu={state.menu.in_menu}, cursor_pos={state.menu.cursor_position}")
-            self._log(f"[NAME ENTRY] Strategy: Press START to use preset name")
+            self._name_entry_state = "init"
+            self._log(f"[NAME ENTRY START] cursor: ({current_x}, {current_y}), name: '{current_name}'")
+            self._log(f"[NAME ENTRY START] Strategy: Navigate to END and press A to accept empty/default name")
         
         self._name_entry_attempts += 1
         
-        # Debug every few attempts
-        if self._name_entry_attempts % 10 == 0:
-            self._log(f"[NAME ENTRY] Attempt {self._name_entry_attempts}: Still at ({current_x}, {current_y})")
+        # Log progress every 5 attempts
+        if self._name_entry_attempts % 5 == 0:
+            self._log(f"[NAME ENTRY] Attempt {self._name_entry_attempts}, state={self._name_entry_state}, cursor=({current_x},{current_y}), name='{current_name}'")
         
-        # In Pokemon Crystal, pressing START on the name entry screen
-        # brings up preset names to choose from
-        # So just press START repeatedly until it works
+        # State machine for name entry
+        # Strategy: Navigate to the bottom-right where END is located, then press A
         
-        if self._name_entry_attempts > 50:
-            # Give up and just try to confirm whatever is there
-            self._log(f"[NAME ENTRY] Timeout - pressing A to accept")
-            self._name_entry_attempts = 0
+        if self._name_entry_state == "init":
+            # First, try to move down to the bottom row
+            self._log(f"[NAME ENTRY] Moving down to find END button")
+            self._name_entry_state = "moving_down"
+            return "name_grid_down"
+        
+        elif self._name_entry_state == "moving_down":
+            # Keep moving down until we're at the bottom
+            if current_y >= 4 or self._name_entry_attempts > 15:
+                self._log(f"[NAME ENTRY] At bottom row (y={current_y}), moving right to END")
+                self._name_entry_state = "moving_right"
+            return "name_grid_down"
+        
+        elif self._name_entry_state == "moving_right":
+            # Move right to find END
+            if current_x >= 8 or self._name_entry_attempts > 25:
+                self._log(f"[NAME ENTRY] Should be at END (x={current_x}), pressing A to confirm")
+                self._name_entry_state = "confirming"
+            return "name_grid_right"
+        
+        elif self._name_entry_state == "confirming":
+            # Press A to confirm
+            self._log(f"[NAME ENTRY] Confirming name entry with A button")
+            if self._name_entry_attempts > 35:
+                # Check if name changed
+                if current_name != "???????????":
+                    self._log(f"[NAME ENTRY SUCCESS] Name changed to: '{current_name}'")
+                    self._name_entry_attempts = 0
+                    self._name_entry_state = "done"
+                else:
+                    self._log(f"[NAME ENTRY] Name still placeholder, retrying from start")
+                    self._name_entry_state = "init"
+                    self._name_entry_attempts = 0
             return "select_option"
         
-        # Press START to access preset names
-        self._log(f"[NAME ENTRY] Pressing START for preset menu")
-        return "start_game"  # START button to open preset name menu
+        # Fallback
+        return "select_option"
     
     def initialize(self, **kwargs) -> bool:
         from .memory_manager import MemoryManager
@@ -619,7 +647,8 @@ class ToolkitAgent:
         # Log screen type changes for debugging
         if not hasattr(self, '_last_screen_type') or self._last_screen_type != screen_type:
             cursor = state.menu
-            self._log(f"[SCREEN] {screen_type} (cursor: x={cursor.cursor_x}, y={cursor.cursor_y}, menu={cursor.in_menu}, text={cursor.text_active})")
+            self._log(f"[SCREEN CHANGE] {self._last_screen_type if hasattr(self, '_last_screen_type') else 'none'} -> {screen_type}")
+            self._log(f"[SCREEN INFO] cursor=({cursor.cursor_x},{cursor.cursor_y}), menu={cursor.in_menu}, text={cursor.text_active}, name='{state.player_name}'")
             self._last_screen_type = screen_type
         
         if screen_type == "name_entry":
@@ -947,6 +976,13 @@ Which action? Reply with ONLY the action name."""
         # Log thinking about what action to take
         self._log_thinking_process(state, situation, goal)
         
+        # Write state to JSON file for external monitoring
+        if not hasattr(self, '_state_write_counter'):
+            self._state_write_counter = 0
+        self._state_write_counter += 1
+        if self._state_write_counter % 30 == 0:  # Every 30 frames (~0.5 seconds)
+            self._write_state_json(state, situation, goal)
+        
         # Get action - use goal hints + situation
         action_name = None
         
@@ -1118,6 +1154,37 @@ Which action? Reply with ONLY the action name."""
         """Minimal logging - main output is raw LLM I/O."""
         # Just log the situation change, LLM prompt/response handles the rest
         pass
+    
+    def _write_state_json(self, state, situation: str, goal):
+        """Write current state to JSON file for monitoring."""
+        try:
+            import json
+            status = {
+                "frame": self._state_write_counter,
+                "situation": situation,
+                "screen_type": state.menu.screen_type,
+                "goal": {
+                    "id": goal.id if goal else "none",
+                    "name": goal.name if goal else "none",
+                    "progress": goal.progress if goal else 0
+                },
+                "player": {
+                    "name": state.player_name,
+                    "position": (state.player_position.x, state.player_position.y),
+                    "map": state.player_position.map_name,
+                    "party_count": state.party_count
+                },
+                "menu": {
+                    "in_menu": state.menu.in_menu,
+                    "text_active": state.menu.text_active,
+                    "cursor": (state.menu.cursor_x, state.menu.cursor_y)
+                },
+                "last_action": self.current_result.message if self.current_result else "none"
+            }
+            with open("ai_state.json", "w") as f:
+                json.dump(status, f, indent=2)
+        except Exception as e:
+            pass  # Silently fail if can't write
     
     def get_thinking_output(self) -> List[str]:
         return self.thinking_history.copy()
