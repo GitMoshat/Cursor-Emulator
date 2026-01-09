@@ -1,7 +1,7 @@
 {
-  "frame": 150,
-  "situation": "name_entry",
-  "screen_type": "name_entry",
+  "frame": 60,
+  "situation": "overworld",
+  "screen_type": "overworld",
   "goal": {
     "id": "start_game",
     "name": "Start the Game",
@@ -20,9 +20,9 @@
     "in_menu": false,
     "text_active": false,
     "cursor": [
-      8,
-      15
+      0,
+      0
     ]
   },
-  "last_action": "Grid down"
+  "last_action": "Moving down"
 }

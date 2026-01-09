@@ -939,13 +939,16 @@ class MemoryManager:
                      f"menu={state.menu.in_menu} cur=({cursor_x},{cursor_y}) name='{state.player_name}'")
         
         # ========================================
-        # PRIORITY 1: NAME ENTRY TYPE FLAG - MOST RELIABLE
-        # This flag is set specifically when naming player/rival/pokemon
-        # It MUST be checked FIRST before any other screen detection!
+        # PRIORITY 1: NAME ENTRY TYPE FLAG
+        # Valid name entry types are small numbers (1-5 typically):
+        # 1 = Player name, 2 = Rival name, 3 = Pokemon name, etc.
+        # 0x50 (80) is the string terminator - NOT a valid type!
+        # 0x80+ are character values - NOT valid types!
         # ========================================
         if 'name_entry_type' in self.addresses:
             name_entry_type = self.read_byte(self.addresses['name_entry_type'])
-            if name_entry_type > 0 and name_entry_type < 0xFF:  # Valid name entry active
+            # Only 1-10 are valid name entry types (small numbers)
+            if 0 < name_entry_type <= 10:
                 print(f"[DETECT] >>> NAME_ENTRY (flag={name_entry_type}) <<< | {debug_vals}")
                 return "name_entry"
         

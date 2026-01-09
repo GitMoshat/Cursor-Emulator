@@ -571,48 +571,54 @@ class ToolkitAgent:
         return "advance_dialog"
     
     def _get_name_entry_action(self, state) -> str:
-        """Handle name entry - be adaptive.
+        """Handle name entry - SIMPLE and RELIABLE.
         
-        The name entry screen has a character grid.
-        Strategy: Try START for presets, then navigate to END and press A.
+        Pokemon Crystal name entry:
+        - Press START to open preset names list
+        - Press A to select the first preset name
+        - Press A again to confirm
+        
+        This is much simpler than trying to navigate the character grid.
         """
-        current_x = state.menu.cursor_x
-        current_y = state.menu.cursor_y
         current_name = state.player_name
         
-        # Track attempts
+        # Track attempts and phases
         if not hasattr(self, '_name_entry_attempts'):
             self._name_entry_attempts = 0
-            self._log(f"[NAME ENTRY] Starting - cursor: ({current_x}, {current_y})")
+            self._name_entry_phase = 0  # 0=start, 1=select_preset, 2=confirm
+            self._log(f"[NAME] Starting name entry")
         
         self._name_entry_attempts += 1
         
-        # Check if name changed (success!)
-        name_is_placeholder = current_name and all(c == '?' for c in current_name.strip())
-        if not name_is_placeholder and len(current_name.strip()) > 0:
-            self._log(f"[NAME ENTRY SUCCESS!] Name: '{current_name}'")
-            self._name_entry_attempts = 0
-            return "advance_dialog"
+        # Check if we got a name (success!)
+        if current_name:
+            name_is_placeholder = all(c == '?' for c in current_name.strip())
+            if not name_is_placeholder and len(current_name.strip()) > 0:
+                self._log(f"[NAME] Success! Name = '{current_name}'")
+                self._name_entry_attempts = 0
+                self._name_entry_phase = 0
+                return "advance_dialog"
         
-        # Log occasionally
-        if self._name_entry_attempts % 15 == 0:
-            self._log(f"[NAME ENTRY] Attempt {self._name_entry_attempts}, cursor=({current_x},{current_y})")
+        # Simple state machine:
+        # Phase 0: Press START to bring up presets (do this a few times)
+        # Phase 1: Press A to select preset
+        # Phase 2: Press A to confirm
         
-        # Simple adaptive strategy:
-        # 1. First try START to get preset names (attempts 1-20)
-        # 2. Then try navigating to END and pressing A (attempts 21+)
+        if self._name_entry_attempts <= 5:
+            # Phase 0: Press START multiple times to get preset menu
+            self._log(f"[NAME] Pressing START for presets ({self._name_entry_attempts}/5)")
+            return "start_game"  # START button
         
-        if self._name_entry_attempts <= 20:
-            return "start_game"  # Press START for presets
+        elif self._name_entry_attempts <= 15:
+            # Phase 1: Press A to select first preset name
+            self._log(f"[NAME] Pressing A to select ({self._name_entry_attempts}/15)")
+            return "select_option"  # A button
+        
         else:
-            # Cycle through: down, right, A
-            cycle = self._name_entry_attempts % 4
-            if cycle == 0:
-                return "name_grid_down"
-            elif cycle == 1:
-                return "name_grid_right"
-            else:
-                return "select_option"  # Press A
+            # Phase 2: Keep pressing A to confirm
+            if self._name_entry_attempts % 10 == 0:
+                self._log(f"[NAME] Confirming... attempt {self._name_entry_attempts}")
+            return "advance_dialog"  # A button
     
     def initialize(self, **kwargs) -> bool:
         from .memory_manager import MemoryManager
