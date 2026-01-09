@@ -542,8 +542,9 @@ class ToolkitAgent:
     def _get_name_entry_action(self, state) -> str:
         """Get next action for name entry state machine.
         
-        Pokemon Crystal name entry: The screen shows a character grid,
-        and we want to press SELECT to switch to preset names, or just press A on END.
+        Pokemon Crystal name entry: Try multiple approaches:
+        1. Press START to bring up preset names menu
+        2. If that doesn't work, press A repeatedly to accept
         """
         current_x = state.menu.cursor_x
         current_y = state.menu.cursor_y
@@ -552,56 +553,46 @@ class ToolkitAgent:
         # Track how many times we've tried
         if not hasattr(self, '_name_entry_attempts'):
             self._name_entry_attempts = 0
-            self._name_entry_state = "init"
+            self._name_entry_phase = 1  # Start with phase 1 (try START)
             self._log(f"[NAME ENTRY START] cursor: ({current_x}, {current_y}), name: '{current_name}'")
-            self._log(f"[NAME ENTRY START] Strategy: Navigate to END and press A to accept empty/default name")
+            self._log(f"[NAME ENTRY] Phase 1: Try pressing START for preset names")
         
         self._name_entry_attempts += 1
         
-        # Log progress every 5 attempts
-        if self._name_entry_attempts % 5 == 0:
-            self._log(f"[NAME ENTRY] Attempt {self._name_entry_attempts}, state={self._name_entry_state}, cursor=({current_x},{current_y}), name='{current_name}'")
+        # Check if name changed (success!)
+        name_is_placeholder = current_name and all(c == '?' for c in current_name.strip())
+        if not name_is_placeholder and len(current_name.strip()) > 0:
+            self._log(f"[NAME ENTRY SUCCESS!] Name is now: '{current_name}'")
+            self._name_entry_attempts = 0
+            self._name_entry_phase = 1
+            return "advance_dialog"  # Move past name entry
         
-        # State machine for name entry
-        # Strategy: Navigate to the bottom-right where END is located, then press A
+        # Log progress every 10 attempts
+        if self._name_entry_attempts % 10 == 0:
+            self._log(f"[NAME ENTRY] Phase {self._name_entry_phase}, Attempt {self._name_entry_attempts}, cursor=({current_x},{current_y})")
         
-        if self._name_entry_state == "init":
-            # First, try to move down to the bottom row
-            self._log(f"[NAME ENTRY] Moving down to find END button")
-            self._name_entry_state = "moving_down"
-            return "name_grid_down"
+        # Phase 1: Try pressing START to bring up preset names (first 30 attempts)
+        if self._name_entry_phase == 1:
+            if self._name_entry_attempts > 30:
+                self._log(f"[NAME ENTRY] Phase 1 failed, trying Phase 2: Press A on END")
+                self._name_entry_phase = 2
+                self._name_entry_attempts = 0
+            return "start_game"  # Press START
         
-        elif self._name_entry_state == "moving_down":
-            # Keep moving down until we're at the bottom
-            if current_y >= 4 or self._name_entry_attempts > 15:
-                self._log(f"[NAME ENTRY] At bottom row (y={current_y}), moving right to END")
-                self._name_entry_state = "moving_right"
-            return "name_grid_down"
+        # Phase 2: Navigate DOWN to bottom row, then RIGHT to END, then press A
+        elif self._name_entry_phase == 2:
+            # Alternate between pressing down, right, and A
+            action_cycle = self._name_entry_attempts % 5
+            if action_cycle < 2:
+                return "name_grid_down"  # Press DOWN
+            elif action_cycle < 4:
+                return "name_grid_right"  # Press RIGHT
+            else:
+                return "select_option"  # Press A
         
-        elif self._name_entry_state == "moving_right":
-            # Move right to find END
-            if current_x >= 8 or self._name_entry_attempts > 25:
-                self._log(f"[NAME ENTRY] Should be at END (x={current_x}), pressing A to confirm")
-                self._name_entry_state = "confirming"
-            return "name_grid_right"
-        
-        elif self._name_entry_state == "confirming":
-            # Press A to confirm
-            self._log(f"[NAME ENTRY] Confirming name entry with A button")
-            if self._name_entry_attempts > 35:
-                # Check if name changed
-                if current_name != "???????????":
-                    self._log(f"[NAME ENTRY SUCCESS] Name changed to: '{current_name}'")
-                    self._name_entry_attempts = 0
-                    self._name_entry_state = "done"
-                else:
-                    self._log(f"[NAME ENTRY] Name still placeholder, retrying from start")
-                    self._name_entry_state = "init"
-                    self._name_entry_attempts = 0
+        # Phase 3: Just spam A to accept whatever
+        else:
             return "select_option"
-        
-        # Fallback
-        return "select_option"
     
     def initialize(self, **kwargs) -> bool:
         from .memory_manager import MemoryManager

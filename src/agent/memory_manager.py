@@ -522,8 +522,12 @@ class MemoryManager:
     def detect_game(self):
         """Detect game type from ROM header."""
         try:
-            # Read ROM title (0x134-0x143)
-            title_bytes = bytes(self.memory.rom[0x134:0x144])
+            # Read ROM title (0x134-0x143) - ROM is stored in the MBC
+            if hasattr(self.memory, 'mbc') and self.memory.mbc is not None:
+                rom = self.memory.mbc.rom
+            else:
+                raise AttributeError("No ROM data available")
+            title_bytes = bytes(rom[0x134:0x144])
             title = title_bytes.decode('ascii', errors='ignore').strip('\x00')
             
             title_lower = title.lower()
@@ -575,6 +579,26 @@ class MemoryManager:
     def read_bytes(self, address: int, length: int) -> bytes:
         """Read multiple bytes."""
         return bytes(self.memory.read(address + i) for i in range(length))
+    
+    def _decode_pokemon_string(self, data: bytes) -> str:
+        """Decode Pokemon character encoding to ASCII."""
+        # Pokemon uses custom character encoding
+        # 0x50 = terminator, 0x80+ = letters
+        result = []
+        for byte in data:
+            if byte == 0x50:  # Terminator
+                break
+            elif byte == 0x7F:  # Space
+                result.append(' ')
+            elif 0x80 <= byte <= 0x99:  # A-Z (uppercase)
+                result.append(chr(ord('A') + (byte - 0x80)))
+            elif 0xA0 <= byte <= 0xB9:  # a-z (lowercase)
+                result.append(chr(ord('a') + (byte - 0xA0)))
+            elif 0xF6 <= byte <= 0xFF:  # 0-9 (numbers)
+                result.append(chr(ord('0') + (byte - 0xF6)))
+            else:
+                result.append('?')  # Unknown character
+        return ''.join(result)
     
     def read_bcd(self, address: int, length: int) -> int:
         """Read BCD-encoded number (used for money)."""
@@ -796,6 +820,15 @@ class MemoryManager:
             # Detect screen type based on game state
             state.menu.screen_type = self._detect_screen_type(state)
             
+            # If on name entry screen, read NAME ENTRY SPECIFIC cursor addresses!
+            # These are DIFFERENT from regular menu cursor addresses
+            if state.menu.screen_type == "name_entry":
+                if 'name_entry_cursor_x' in self.addresses:
+                    state.menu.cursor_x = self.read_byte(self.addresses['name_entry_cursor_x'])
+                if 'name_entry_cursor_y' in self.addresses:
+                    state.menu.cursor_y = self.read_byte(self.addresses['name_entry_cursor_y'])
+                print(f"[NAME_ENTRY CURSOR] x={state.menu.cursor_x}, y={state.menu.cursor_y}")
+            
             # Calculate pixel positions for current selection
             self._calculate_selection_pixels(state)
             
@@ -895,89 +928,67 @@ class MemoryManager:
         if state.battle.in_battle:
             return "battle"
         
-        # Check various game state indicators
+        # Read memory values
         game_state = self.read_byte(self.addresses.get('game_state', 0))
         intro_scene = self.read_byte(self.addresses.get('intro_scene', 0))
-        script_running = self.read_byte(self.addresses.get('script_running', 0))
-        wram_state = self.read_byte(self.addresses.get('wram_state', 0))
-        
-        # Check for name entry screen - look for the characteristic pattern
-        # Name entry has cursor_y values 0-5 (rows of character grid)
-        # and cursor_x values 0-9 (columns)
         cursor_y = state.menu.cursor_y
         cursor_x = state.menu.cursor_x
         
-        # DEBUG: Build debug info string
+        # Debug info
         debug_vals = (f"gs={game_state} intro={intro_scene} party={state.party_count} "
-                     f"menu={state.menu.in_menu} cur=({cursor_x},{cursor_y}) name='{state.player_name}' started={state.game_started}")
+                     f"menu={state.menu.in_menu} cur=({cursor_x},{cursor_y}) name='{state.player_name}'")
         
-        # IMPORTANT: Check title screen FIRST before anything else
-        # Title screen detection - game_state is 0 at title
-        if game_state == 0 and state.party_count == 0 and not state.game_started:
-            return "title"
-        
-        # Primary check: name entry type flag (only check if past title)
+        # ========================================
+        # PRIORITY 1: NAME ENTRY TYPE FLAG - MOST RELIABLE
+        # This flag is set specifically when naming player/rival/pokemon
+        # It MUST be checked FIRST before any other screen detection!
+        # ========================================
         if 'name_entry_type' in self.addresses:
             name_entry_type = self.read_byte(self.addresses['name_entry_type'])
-            if name_entry_type > 0:  # Active name entry
-                print(f"[DETECT] name_entry (flag={name_entry_type}) | {debug_vals}")
+            if name_entry_type > 0 and name_entry_type < 0xFF:  # Valid name entry active
+                print(f"[DETECT] >>> NAME_ENTRY (flag={name_entry_type}) <<< | {debug_vals}")
                 return "name_entry"
         
-        # Secondary check: during intro with specific cursor pattern
-        # Name entry is the only screen with a large 2D grid of options
-        # CRITICAL: game_state MUST be >= 1 (past title screen) AND we must have started the game
-        if game_state >= 1 and state.party_count == 0 and state.menu.in_menu and state.game_started:
-            # Check if player name consists only of '?' characters (uninitialized)
+        # ========================================
+        # PRIORITY 2: FALLBACK NAME ENTRY DETECTION
+        # If during intro scene and player name is all '?' (placeholder)
+        # ========================================
+        if intro_scene != 0 and state.menu.in_menu:
             name_is_placeholder = state.player_name and all(c == '?' for c in state.player_name.strip())
-            name_empty = not state.player_name or len(state.player_name.strip()) == 0 or name_is_placeholder
-            
-            # If name is just placeholder '???' and we're in a menu during intro, it's likely name entry
-            # Also verify we're past the NEW GAME selection (game_started must be True)
             if name_is_placeholder:
-                print(f"[DETECT] name_entry (placeholder name) | {debug_vals}")
+                print(f"[DETECT] >>> NAME_ENTRY (placeholder) <<< | {debug_vals}")
                 return "name_entry"
-            
-            # Fallback: large grid check
-            is_large_grid = (cursor_x >= 2 and cursor_y >= 0) or (cursor_x >= 0 and cursor_y >= 2)
-            if is_large_grid and name_empty:
-                print(f"[DETECT] name_entry (pattern) large_grid={is_large_grid} empty={name_empty} | {debug_vals}")
-                return "name_entry"
-            else:
-                # Debug why it's NOT detecting
-                if hasattr(self, '_debug_counter'):
-                    self._debug_counter += 1
-                else:
-                    self._debug_counter = 0
-                
-                # Only print every 60 frames to reduce spam
-                if self._debug_counter % 60 == 0:
-                    print(f"[DETECT] NOT name_entry: large_grid={is_large_grid} empty={name_empty} placeholder={name_is_placeholder} | {debug_vals}")
         
-        # New game / intro scenes
+        # ========================================
+        # PRIORITY 3: TITLE SCREEN
+        # Only after ruling out name entry
+        # ========================================
+        if game_state == 0 and state.party_count == 0:
+            # Check if we're truly at title (intro_scene should be 0 at actual title)
+            if intro_scene == 0:
+                return "title"
+        
+        # ========================================
+        # PRIORITY 4: INTRO / GENDER SELECT / DIALOG
+        # ========================================
         if intro_scene != 0 or (game_state == 1 and state.party_count == 0):
-            # During intro/new game
-            if state.menu.cursor_position in [0, 1] and cursor_y <= 1 and cursor_x <= 1:
-                # Could be gender select (BOY/GIRL) or other two-option
+            # Check for gender select (BOY/GIRL menu with 2 options)
+            if state.menu.in_menu and state.menu.cursor_position in [0, 1] and cursor_y <= 1:
                 return "gender_select"
+            # Check for dialog during intro
+            if state.menu.text_active:
+                return "dialog"
             return "intro"
         
-        # Check if in dialog/text
+        # ========================================
+        # PRIORITY 5: DIALOG / MENU / OVERWORLD
+        # ========================================
         if state.menu.text_active:
             return "dialog"
         
-        # Regular menu open
         if state.menu.in_menu:
-            # Distinguish menu types if possible
-            if cursor_y <= 1 and cursor_x <= 1:
-                # Small menu - likely yes/no or options
-                print(f"[DETECT] option_menu | {debug_vals}")
-                return "option_menu"
-            
-            print(f"[DETECT] menu (generic) | {debug_vals}")
             return "menu"
         
-        # Overworld
-        print(f"[DETECT] overworld | {debug_vals}")
         return "overworld"
     
     def _calculate_selection_pixels(self, state: GameState):
