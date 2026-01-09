@@ -909,9 +909,14 @@ class MemoryManager:
         
         # DEBUG: Build debug info string
         debug_vals = (f"gs={game_state} intro={intro_scene} party={state.party_count} "
-                     f"menu={state.menu.in_menu} cur=({cursor_x},{cursor_y}) name='{state.player_name}'")
+                     f"menu={state.menu.in_menu} cur=({cursor_x},{cursor_y}) name='{state.player_name}' started={state.game_started}")
         
-        # Primary check: name entry type flag
+        # IMPORTANT: Check title screen FIRST before anything else
+        # Title screen detection - game_state is 0 at title
+        if game_state == 0 and state.party_count == 0 and not state.game_started:
+            return "title"
+        
+        # Primary check: name entry type flag (only check if past title)
         if 'name_entry_type' in self.addresses:
             name_entry_type = self.read_byte(self.addresses['name_entry_type'])
             if name_entry_type > 0:  # Active name entry
@@ -920,12 +925,14 @@ class MemoryManager:
         
         # Secondary check: during intro with specific cursor pattern
         # Name entry is the only screen with a large 2D grid of options
-        if (game_state == 1 or intro_scene != 0) and state.party_count == 0 and state.menu.in_menu:
+        # CRITICAL: game_state MUST be >= 1 (past title screen) AND we must have started the game
+        if game_state >= 1 and state.party_count == 0 and state.menu.in_menu and state.game_started:
             # Check if player name consists only of '?' characters (uninitialized)
             name_is_placeholder = state.player_name and all(c == '?' for c in state.player_name.strip())
             name_empty = not state.player_name or len(state.player_name.strip()) == 0 or name_is_placeholder
             
             # If name is just placeholder '???' and we're in a menu during intro, it's likely name entry
+            # Also verify we're past the NEW GAME selection (game_started must be True)
             if name_is_placeholder:
                 print(f"[DETECT] name_entry (placeholder name) | {debug_vals}")
                 return "name_entry"
@@ -945,10 +952,6 @@ class MemoryManager:
                 # Only print every 60 frames to reduce spam
                 if self._debug_counter % 60 == 0:
                     print(f"[DETECT] NOT name_entry: large_grid={is_large_grid} empty={name_empty} placeholder={name_is_placeholder} | {debug_vals}")
-        
-        # Title screen detection - usually game_state is 0 at title
-        if game_state == 0 and state.party_count == 0 and not state.game_started:
-            return "title"
         
         # New game / intro scenes
         if intro_scene != 0 or (game_state == 1 and state.party_count == 0):

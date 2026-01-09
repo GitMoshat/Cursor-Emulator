@@ -185,10 +185,14 @@ class GoalSystem:
         
         # Check based on goal ID and game state
         if goal.id == "start_game":
-            # Complete when game_started AND we've entered a name
-            # Don't complete too early
-            if game_state.player_name and len(game_state.player_name.strip()) > 0:
-                return GoalCheckResult(True, 1.0, f"Started as {game_state.player_name}!")
+            # Complete when we've ACTUALLY entered a name (not placeholder '???')
+            # Verify the name is not all '?' characters
+            player_name = game_state.player_name
+            has_real_name = player_name and len(player_name.strip()) > 0 and not all(c == '?' for c in player_name.strip())
+            
+            if has_real_name:
+                return GoalCheckResult(True, 1.0, f"Started as {player_name}!")
+            
             # Progress indicators
             if game_state.game_started or game_state.menu.screen_type in ["name_entry", "gender_select", "intro"]:
                 return GoalCheckResult(False, 0.6, "In intro sequence...")
