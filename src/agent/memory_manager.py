@@ -768,9 +768,16 @@ class MemoryManager:
                 if 'cursor_x' in self.addresses:
                     state.menu.cursor_x = self.read_byte(self.addresses['cursor_x'])
                 
+                # Text/dialog detection - need multiple checks for accuracy
+                # text_progress alone is unreliable - it can persist after dialog closes
                 if 'text_progress' in self.addresses:
                     text_val = self.read_byte(self.addresses['text_progress'])
-                    state.menu.text_active = text_val != 0
+                    # Only consider text active if:
+                    # 1. text_progress indicates text is being displayed (value 0x01-0xFE, not 0xFF which means done)
+                    # 2. Not in a regular menu (menus have their own system)
+                    # 3. Text progress is in the "active" range (typically 1-253, 0xFF or 0 means done/inactive)
+                    is_text_displaying = text_val > 0 and text_val < 0xFE
+                    state.menu.text_active = is_text_displaying and not state.menu.in_menu
                 
                 # Read menu window bounds (in tiles)
                 if 'menu_border_top' in self.addresses:
@@ -897,22 +904,47 @@ class MemoryManager:
         # Check for name entry screen - look for the characteristic pattern
         # Name entry has cursor_y values 0-5 (rows of character grid)
         # and cursor_x values 0-9 (columns)
+        cursor_y = state.menu.cursor_y
+        cursor_x = state.menu.cursor_x
+        
+        # DEBUG: Build debug info string
+        debug_vals = (f"gs={game_state} intro={intro_scene} party={state.party_count} "
+                     f"menu={state.menu.in_menu} cur=({cursor_x},{cursor_y}) name='{state.player_name}'")
+        
+        # Primary check: name entry type flag
         if 'name_entry_type' in self.addresses:
             name_entry_type = self.read_byte(self.addresses['name_entry_type'])
             if name_entry_type > 0:  # Active name entry
+                print(f"[DETECT] name_entry (flag={name_entry_type}) | {debug_vals}")
                 return "name_entry"
         
-        # Alternative name entry detection: check if we're in intro with menu open
-        # and cursor values are in character grid range
-        cursor_y = state.menu.cursor_y
-        cursor_x = state.menu.cursor_x
-        if (game_state == 1 or intro_scene != 0) and state.party_count == 0:
-            # During intro - check for name entry pattern
-            # Name entry grid is typically 10 columns x 5+ rows
-            if cursor_x <= 10 and cursor_y <= 6 and state.menu.in_menu:
-                # Likely name entry screen - verify by checking cursor range
-                if cursor_y >= 2 or cursor_x >= 2:  # Not a simple 2-option menu
-                    return "name_entry"
+        # Secondary check: during intro with specific cursor pattern
+        # Name entry is the only screen with a large 2D grid of options
+        if (game_state == 1 or intro_scene != 0) and state.party_count == 0 and state.menu.in_menu:
+            # Check if player name consists only of '?' characters (uninitialized)
+            name_is_placeholder = state.player_name and all(c == '?' for c in state.player_name.strip())
+            name_empty = not state.player_name or len(state.player_name.strip()) == 0 or name_is_placeholder
+            
+            # If name is just placeholder '???' and we're in a menu during intro, it's likely name entry
+            if name_is_placeholder:
+                print(f"[DETECT] name_entry (placeholder name) | {debug_vals}")
+                return "name_entry"
+            
+            # Fallback: large grid check
+            is_large_grid = (cursor_x >= 2 and cursor_y >= 0) or (cursor_x >= 0 and cursor_y >= 2)
+            if is_large_grid and name_empty:
+                print(f"[DETECT] name_entry (pattern) large_grid={is_large_grid} empty={name_empty} | {debug_vals}")
+                return "name_entry"
+            else:
+                # Debug why it's NOT detecting
+                if hasattr(self, '_debug_counter'):
+                    self._debug_counter += 1
+                else:
+                    self._debug_counter = 0
+                
+                # Only print every 60 frames to reduce spam
+                if self._debug_counter % 60 == 0:
+                    print(f"[DETECT] NOT name_entry: large_grid={is_large_grid} empty={name_empty} placeholder={name_is_placeholder} | {debug_vals}")
         
         # Title screen detection - usually game_state is 0 at title
         if game_state == 0 and state.party_count == 0 and not state.game_started:
@@ -935,11 +967,14 @@ class MemoryManager:
             # Distinguish menu types if possible
             if cursor_y <= 1 and cursor_x <= 1:
                 # Small menu - likely yes/no or options
+                print(f"[DETECT] option_menu | {debug_vals}")
                 return "option_menu"
             
+            print(f"[DETECT] menu (generic) | {debug_vals}")
             return "menu"
         
         # Overworld
+        print(f"[DETECT] overworld | {debug_vals}")
         return "overworld"
     
     def _calculate_selection_pixels(self, state: GameState):

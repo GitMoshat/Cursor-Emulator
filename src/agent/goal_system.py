@@ -185,19 +185,24 @@ class GoalSystem:
         
         # Check based on goal ID and game state
         if goal.id == "start_game":
-            # Complete when game_started or we see intro
-            if game_state.game_started or game_state.player_position.x > 0:
-                return GoalCheckResult(True, 1.0, "Game started!")
-            # Progress based on attempts
-            return GoalCheckResult(False, min(goal.attempts / 100, 0.9), "Trying to start...")
+            # Complete when game_started AND we've entered a name
+            # Don't complete too early
+            if game_state.player_name and len(game_state.player_name.strip()) > 0:
+                return GoalCheckResult(True, 1.0, f"Started as {game_state.player_name}!")
+            # Progress indicators
+            if game_state.game_started or game_state.menu.screen_type in ["name_entry", "gender_select", "intro"]:
+                return GoalCheckResult(False, 0.6, "In intro sequence...")
+            return GoalCheckResult(False, min(goal.attempts / 100, 0.3), "Trying to start...")
         
         elif goal.id == "complete_intro":
-            # Complete when player can move (position changes or in overworld)
-            if game_state.player_position.map_id > 0 and not game_state.menu.text_active:
-                return GoalCheckResult(True, 1.0, "Intro complete!")
-            if game_state.player_name:
+            # Complete when player is in overworld (not in dialog, can move freely)
+            screen_type = game_state.menu.screen_type
+            if screen_type == "overworld" and game_state.player_position.map_id > 0:
+                return GoalCheckResult(True, 1.0, "Intro complete - can move!")
+            # Progress indicators
+            if game_state.player_name and len(game_state.player_name.strip()) > 0:
                 return GoalCheckResult(False, 0.5, f"Named: {game_state.player_name}")
-            return GoalCheckResult(False, 0.2, "In intro...")
+            return GoalCheckResult(False, 0.2, f"In {screen_type}...")
         
         elif goal.id == "leave_house":
             # Complete when outside (map changes from starting interior)
@@ -263,4 +268,6 @@ class GoalSystem:
             'completed': len(self.completed_goals),
             'total': len(self.goals),
         }
+
+
 

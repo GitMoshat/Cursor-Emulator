@@ -542,39 +542,38 @@ class ToolkitAgent:
     def _get_name_entry_action(self, state) -> str:
         """Get next action for name entry state machine.
         
-        Pokemon Crystal has preset names - just navigate down and press A
-        to select one of the default names (like GOLD, SILVER, etc.)
+        Pokemon Crystal name entry: The screen shows a character grid,
+        and we want to press START to use a preset name.
         """
         current_x = state.menu.cursor_x
         current_y = state.menu.cursor_y
         
-        # Track how many times we've tried to confirm
-        if not hasattr(self, '_name_confirm_count'):
-            self._name_confirm_count = 0
+        # Track how many times we've tried
+        if not hasattr(self, '_name_entry_attempts'):
+            self._name_entry_attempts = 0
+            self._log(f"[NAME ENTRY] Starting - cursor: ({current_x}, {current_y})")
+            self._log(f"[NAME ENTRY] Memory: in_menu={state.menu.in_menu}, cursor_pos={state.menu.cursor_position}")
+            self._log(f"[NAME ENTRY] Strategy: Press START to use preset name")
         
-        # In Pokemon Crystal, there are preset names at the bottom of the name screen
-        # Strategy: Navigate down to preset names and select one
+        self._name_entry_attempts += 1
         
-        # If cursor is in the character grid (y < 4), move down to preset names
-        if current_y < 4:
-            self._log(f"NAME ENTRY: Moving to preset names (y={current_y})")
-            return "name_grid_down"
+        # Debug every few attempts
+        if self._name_entry_attempts % 10 == 0:
+            self._log(f"[NAME ENTRY] Attempt {self._name_entry_attempts}: Still at ({current_x}, {current_y})")
         
-        # At bottom row - look for preset names or END
-        # Preset names are usually on the left side, END is on the right
-        # Just press A to select whatever we're on
-        self._name_confirm_count += 1
+        # In Pokemon Crystal, pressing START on the name entry screen
+        # brings up preset names to choose from
+        # So just press START repeatedly until it works
         
-        if self._name_confirm_count > 10:
-            # Stuck - try navigating right to END and confirm
-            self._log("NAME ENTRY: Stuck, going to END")
-            if current_x < 8:
-                return "name_grid_right"
-            self._name_confirm_count = 0
-            return "name_confirm"
+        if self._name_entry_attempts > 50:
+            # Give up and just try to confirm whatever is there
+            self._log(f"[NAME ENTRY] Timeout - pressing A to accept")
+            self._name_entry_attempts = 0
+            return "select_option"
         
-        self._log(f"NAME ENTRY: Selecting preset at ({current_x}, {current_y})")
-        return "select_option"  # Press A to select preset name
+        # Press START to access preset names
+        self._log(f"[NAME ENTRY] Pressing START for preset menu")
+        return "start_game"  # START button to open preset name menu
     
     def initialize(self, **kwargs) -> bool:
         from .memory_manager import MemoryManager
@@ -616,13 +615,23 @@ class ToolkitAgent:
         """Determine current situation."""
         # Check screen type from memory manager first
         screen_type = state.menu.screen_type
+        
+        # Log screen type changes for debugging
+        if not hasattr(self, '_last_screen_type') or self._last_screen_type != screen_type:
+            cursor = state.menu
+            self._log(f"[SCREEN] {screen_type} (cursor: x={cursor.cursor_x}, y={cursor.cursor_y}, menu={cursor.in_menu}, text={cursor.text_active})")
+            self._last_screen_type = screen_type
+        
         if screen_type == "name_entry":
             return "name_entry"
         
         if state.battle.in_battle:
             return "battle"
+        
+        # Check for text/dialog
         if state.menu.text_active:
             return "dialog"
+        
         if state.menu.in_menu:
             return "menu"
         if not state.game_started and state.party_count == 0:

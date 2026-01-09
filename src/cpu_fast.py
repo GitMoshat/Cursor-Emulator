@@ -1632,3 +1632,5 @@ class CPUFast:
     def write_byte(self, addr: int, value: int):
         self.memory.write(addr, value)
 
+
+

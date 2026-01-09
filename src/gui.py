@@ -161,6 +161,12 @@ class EmulatorGUI:
             self._toggle_agent()
             self.agent_thinking_log.append(f"[Attempt {self.current_attempt}/{self.max_attempts}] Starting...")
         
+        import time as _time
+        _perf_emu = 0
+        _perf_ai = 0
+        _perf_draw = 0
+        _perf_count = 0
+        
         while self.running:
             self._handle_events()
             
@@ -172,16 +178,22 @@ class EmulatorGUI:
                 if self.turbo_mode and self.agent_enabled:
                     frames_to_run = 4  # Run 4 frames per loop iteration in turbo
                 
+                _t0 = _time.perf_counter()
                 for i in range(frames_to_run):
                     frame = self.emulator.run_frame()
                     self._frame_count += 1
-                    
-                    # Let AI agent process frame (in turbo, only process first frame)
-                    if self.agent_manager and self.agent_enabled and i == 0:
-                        action = self.agent_manager.process_frame(frame, turbo=self.turbo_mode)
-                        if action and action.reasoning:
-                            turbo_str = " [TURBO]" if self.turbo_mode else ""
-                            self.agent_status_text = f"AI{turbo_str}: {action.reasoning[:35]}"
+                _t1 = _time.perf_counter()
+                _perf_emu += (_t1 - _t0) * 1000
+                
+                # Let AI agent process frame
+                _t0 = _time.perf_counter()
+                if self.agent_manager and self.agent_enabled:
+                    action = self.agent_manager.process_frame(frame, turbo=self.turbo_mode)
+                    if action and action.reasoning:
+                        turbo_str = " [TURBO]" if self.turbo_mode else ""
+                        self.agent_status_text = f"AI{turbo_str}: {action.reasoning[:35]}"
+                _t1 = _time.perf_counter()
+                _perf_ai += (_t1 - _t0) * 1000
                 
                 # Only update display on last frame
                 self._update_game_surface(frame)
@@ -198,13 +210,24 @@ class EmulatorGUI:
                         if goal and goal.id == "get_starter":
                             self._handle_attempt_complete(True)
             
+            _t0 = _time.perf_counter()
             self._draw()
+            _t1 = _time.perf_counter()
+            _perf_draw += (_t1 - _t0) * 1000
             
-            # FPS limiting (skip in turbo mode)
-            if not self.turbo_mode:
-                self.clock.tick(60)
+            _perf_count += 1
+            
+            # Print perf stats every 60 frames
+            if _perf_count >= 60:
+                print(f"[PERF] Emu: {_perf_emu/_perf_count:.1f}ms, AI: {_perf_ai/_perf_count:.1f}ms, Draw: {_perf_draw/_perf_count:.1f}ms | Turbo: {self.turbo_mode}")
+                _perf_emu = _perf_ai = _perf_draw = 0
+                _perf_count = 0
+            
+            # FPS limiting - limit to 60 FPS in normal mode, unlimited in turbo
+            if self.turbo_mode:
+                self.clock.tick(0)  # No limit - run as fast as possible
             else:
-                self.clock.tick(0)  # Unlimited
+                self.clock.tick(60)  # 60 FPS cap for normal gameplay
             
             # Track FPS
             self.fps_samples.append(self.clock.get_fps())
