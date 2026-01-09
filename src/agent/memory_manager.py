@@ -954,9 +954,10 @@ class MemoryManager:
         
         # ========================================
         # PRIORITY 2: FALLBACK NAME ENTRY DETECTION
-        # If during intro scene and player name is all '?' (placeholder)
+        # Only during early intro (intro_scene 1-50) when name is placeholder
+        # High intro_scene values (200+) are other screens, not name entry
         # ========================================
-        if intro_scene != 0 and state.menu.in_menu:
+        if 0 < intro_scene < 100 and state.menu.in_menu and game_state == 0:
             name_is_placeholder = state.player_name and all(c == '?' for c in state.player_name.strip())
             if name_is_placeholder:
                 print(f"[DETECT] >>> NAME_ENTRY (placeholder) <<< | {debug_vals}")

@@ -883,12 +883,13 @@ Which action should I take? Respond with just the action name."""
         
         # Handle overworld - the main exploration
         if situation == "overworld":
-            # Check if we should interact with something
+            # Check if there's dialog text showing - should press A!
             if screen_info and screen_info.background_text.has_content:
-                # There's text in the world - might be a sign or NPC
                 text = screen_info.background_text.clean()
-                if text and len(text) > 5:
+                if text and len(text) > 10:
                     self._log(f"[WORLD] Text: {text[:40]}...")
+                    # If text is showing, we should advance it, not move!
+                    return "advance_dialog"
             
             if not goal:
                 return self._get_heuristic_action(situation, state)

@@ -1,28 +1,28 @@
 {
-  "frame": 60,
-  "situation": "overworld",
-  "screen_type": "overworld",
+  "frame": 90,
+  "situation": "menu",
+  "screen_type": "menu",
   "goal": {
-    "id": "start_game",
-    "name": "Start the Game",
-    "progress": 0.6
+    "id": "complete_intro",
+    "name": "Complete Introduction",
+    "progress": 0.5
   },
   "player": {
-    "name": "???????????",
+    "name": "IEBHEBH",
     "position": [
-      0,
+      7,
       0
     ],
-    "map": "Map 0:0",
+    "map": "Route 35",
     "party_count": 0
   },
   "menu": {
-    "in_menu": false,
+    "in_menu": true,
     "text_active": false,
     "cursor": [
-      0,
-      0
+      1,
+      134
     ]
   },
-  "last_action": "Moving down"
+  "last_action": "Selecting option"
 }
